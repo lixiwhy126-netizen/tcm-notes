@@ -54,7 +54,10 @@
   customKB.formulas = customKB.formulas || [];
   customKB.diseases = customKB.diseases || [];
   customKB.signs = customKB.signs || [];
-  customKB.suppress = customKB.suppress || []; // 被用户编辑覆盖的内置条目（"类型|名称"）
+  customKB.suppress = customKB.suppress || []; // 被用户编辑覆盖或删除的内置条目（"类型|名称"）
+  ['western', 'drugs', 'labs', 'symptoms'].forEach(function (k) {
+    customKB[k] = customKB[k] || [];
+  });
 
   function isSuppressed(type, name) {
     return customKB.suppress.indexOf(type + '|' + name) >= 0;
@@ -69,6 +72,37 @@
   function uid() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   }
+
+  // 分组注册表（空组也能存在；删除组即从注册表移除并解除患者归属）
+  var LS_GROUPS = 'tcm_groups_v1';
+  var groupRegistry = loadJSON(LS_GROUPS, []);
+  function persistGroups() { localStorage.setItem(LS_GROUPS, JSON.stringify(groupRegistry)); }
+  function patientFolders(p) {
+    return Array.isArray(p.folders) ? p.folders : [];
+  }
+  function addToGroup(p, g) {
+    p.folders = patientFolders(p);
+    if (p.folders.indexOf(g) < 0) p.folders.push(g);
+  }
+  function removeFromGroup(p, g) {
+    p.folders = patientFolders(p).filter(function (x) { return x !== g; });
+  }
+  function allGroups() {
+    var set = groupRegistry.slice();
+    patients.forEach(function (p) {
+      patientFolders(p).forEach(function (f) {
+        if (set.indexOf(f) < 0) set.push(f);
+      });
+    });
+    return set;
+  }
+  // 旧字段迁移：folder(字符串) → folders(数组)
+  patients.forEach(function (p) {
+    if (!Array.isArray(p.folders)) {
+      p.folders = p.folder ? [p.folder] : [];
+      delete p.folder;
+    }
+  });
 
   function esc(s) {
     return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -155,22 +189,22 @@
       }
     }
     vis(FORMULAS, 'formulas').forEach(function (f) { addTerm(f.name, { type: 'formula', data: f }); });
-    WESTERN.forEach(function (w) { addTerm(w.name, { type: 'western', data: w }); });
-    LABS.forEach(function (l) {
+    vis(WESTERN, 'western').forEach(function (w) { addTerm(w.name, { type: 'western', data: w }); });
+    vis(LABS, 'labs').forEach(function (l) {
       addTerm(l.term, { type: 'lab', data: l });
       (l.alias || '').split(/[、,，]/).forEach(function (a) {
         a = a.trim();
         if (a && a.length >= 2) addTerm(a, { type: 'lab', data: l });
       });
     });
-    SYMPTOMS.forEach(function (s) {
+    vis(SYMPTOMS, 'symptoms').forEach(function (s) {
       addTerm(s.term, { type: 'symptom', data: s });
       (s.alias || '').split(/[、,，]/).forEach(function (a) {
         a = a.trim();
         if (a && a.length >= 2) addTerm(a, { type: 'symptom', data: s });
       });
     });
-    DRUGS.forEach(function (d) {
+    vis(DRUGS, 'drugs').forEach(function (d) {
       addTerm(d.name, { type: 'drug', data: d });
       (d.alias || '').split(/[、,，]/).forEach(function (a) {
         a = a.trim();
@@ -181,6 +215,10 @@
     customKB.diseases.forEach(function (d) { addTerm(d.name, { type: 'disease', data: d }); });
     customKB.signs.forEach(function (s) { addTerm(s.term, { type: 'sign', data: s }); });
     customKB.formulas.forEach(function (f) { addTerm(f.name, { type: 'formula', data: f }); });
+    customKB.western.forEach(function (w) { addTerm(w.name, { type: 'western', data: w }); });
+    customKB.drugs.forEach(function (d) { addTerm(d.name, { type: 'drug', data: d }); });
+    customKB.labs.forEach(function (l) { addTerm(l.term, { type: 'lab', data: l }); });
+    customKB.symptoms.forEach(function (s) { addTerm(s.term, { type: 'symptom', data: s }); });
     return TERM_INDEX;
   }
 
@@ -410,24 +448,27 @@
   navKB.onclick = function () { location.hash = '#/kb'; };
 
   // ---------- 视图：患者列表 ----------
+  // ---------- 视图：患者列表（分组文件夹系统） ----------
+  var collapsedGroups = {};   // 折叠状态（会话内记住）
+  var manageMode = false;     // 多选管理模式
+  var checkedPatients = {};   // 勾选项
+  var creatingInGroup = null; // 正在哪个组里新建患者（null 表示无）
+
   function renderPatientList() {
     setHeader('跟诊病例', false);
     setStatus('');
     app.innerHTML =
       '<div class="container">' +
-      '  <div class="card">' +
-      '    <h2>开始记录</h2>' +
-      '    <div class="field"><label>患者姓名（输入后自动匹配已有患者）</label>' +
-      '      <input id="quickName" placeholder="如：张三" autocomplete="off"></div>' +
-      '    <div id="nameMatch"></div>' +
-      '  </div>' +
       '  <div class="toolbar">' +
       '    <input type="search" id="patientSearch" placeholder="搜索患者姓名 / 诊断 / 证型">' +
+      '    <button class="secondary" id="newGroupBtn">＋新建分组</button>' +
+      '    <button class="secondary" id="manageBtn">多选</button>' +
       '  </div>' +
-      '  <div id="patientList"></div>' +
+      '  <div id="groupArea"></div>' +
+      '  <div id="manageBar"></div>' +
       '  <div class="card">' +
       '    <h2>数据备份与迁移</h2>' +
-      '    <p class="hint">数据保存在本浏览器中。换设备或换浏览器前，请先「导出数据」，在新设备上「导入数据」。建议定期导出备份。</p>' +
+      '    <p class="hint">数据（含分组）保存在本浏览器中。换设备或换浏览器前，请先「导出数据」，在新设备上「导入数据」。建议定期导出备份。</p>' +
       '    <div class="data-row mt16">' +
       '      <button class="secondary" id="exportBtn">导出数据</button>' +
       '      <button class="secondary" id="importBtn">导入数据</button>' +
@@ -436,125 +477,249 @@
       '  </div>' +
       '</div>';
 
-    var quickName = document.getElementById('quickName');
-    var nameMatch = document.getElementById('nameMatch');
     var patientSearch = document.getElementById('patientSearch');
+    patientSearch.addEventListener('input', renderGroups);
 
-    function renderNameMatch() {
-      var q = quickName.value.trim();
-      if (!q) { nameMatch.innerHTML = ''; return; }
-      var matched = patients.filter(function (p) { return p.name.indexOf(q) >= 0; });
-      var h = '';
-      matched.forEach(function (p) {
-        var last = sortedVisits(p)[0];
-        var sub = '已有 ' + p.visits.length + ' 次就诊';
-        if (last) sub += ' · 最近 ' + (last.visitDate || '—') + (last.tcmDiagnosis ? ' · ' + last.tcmDiagnosis : '');
-        if (p.note) sub += ' · ' + p.note;
-        h += '<div class="match-item" data-pid="' + p.id + '">' + esc(p.name) +
-          '<div class="sub">' + esc(sub) + ' → 点这里为其新建就诊（自动关联历史病例）</div></div>';
-      });
-      h += '<div class="match-item new" data-new="1">＋ 新建患者「' + esc(q) + '」（与上述均非同一人）</div>';
-      nameMatch.innerHTML = '<div class="match-box">' + h + '</div>';
-
-      Array.prototype.forEach.call(nameMatch.querySelectorAll('.match-item'), function (el) {
-        el.onclick = function () {
-          if (el.dataset.new) {
-            var p = { id: uid(), name: q, gender: '', age: '', note: '', visits: [] };
-            patients.push(p);
-            persist();
-            createVisitAndGo(p);
-          } else {
-            createVisitAndGo(findPatient(el.dataset.pid));
-          }
-        };
-      });
-    }
-    quickName.addEventListener('input', renderNameMatch);
-
-    function renderList() {
-      var q = patientSearch.value.trim().toLowerCase();
-      var list = patients.filter(function (p) {
-        if (!q) return true;
-        if (p.name.toLowerCase().indexOf(q) >= 0) return true;
-        return p.visits.some(function (v) {
-          return (v.tcmDiagnosis + ' ' + v.syndrome + ' ' + v.westernDiagnosis).toLowerCase().indexOf(q) >= 0;
-        });
-      });
-      list.sort(function (a, b) {
-        var la = sortedVisits(a)[0], lb = sortedVisits(b)[0];
-        return (lb ? lb.updatedAt : 0) - (la ? la.updatedAt : 0);
-      });
-      if (!list.length) {
-        document.getElementById('patientList').innerHTML =
-          '<div class="empty">暂无病例<br>在上方输入患者姓名即可开始第一次记录</div>';
-        return;
-      }
-      // 分组（文件夹）：有分组的排前面，未分组的在最后
-      var groups = {}, order = [];
-      list.forEach(function (p) {
-        var f = (p.folder || '').trim();
-        if (!groups[f]) { groups[f] = []; order.push(f); }
-        groups[f].push(p);
-      });
-      order.sort(function (a, b) {
-        if (a === '') return 1;
-        if (b === '') return -1;
-        return a < b ? -1 : 1;
-      });
-      var h = '';
-      order.forEach(function (f) {
-        if (f) {
-          h += '<div class="folder-head">📁 ' + esc(f) +
-            '<span class="folder-del" data-folder="' + esc(f) + '" title="解散分组（患者回到未分组）">×</span></div>';
-        }
-        groups[f].forEach(function (p) {
-          var visits = sortedVisits(p);
-          var last = visits[0];
-          var sub = [];
-          if (last && last.tcmDiagnosis) sub.push(last.tcmDiagnosis);
-          if (last && last.syndrome) sub.push(last.syndrome);
-          h += '<div class="list-item" data-pid="' + p.id + '">' +
-            '<div class="row1"><span class="name">' + esc(p.name) +
-            (p.gender ? ' <span class="hint">' + esc(p.gender) + (p.age ? ' · ' + esc(p.age) + '岁' : '') + '</span>' : '') +
-            '</span><span class="date">' + p.visits.length + ' 次就诊' +
-            '<span class="row-del" data-pid="' + p.id + '" title="删除该患者">×</span></span></div>' +
-            '<div class="sub">' + esc(sub.join(' · ') || '—') + '</div></div>';
-        });
-      });
-      document.getElementById('patientList').innerHTML = h;
-      Array.prototype.forEach.call(document.querySelectorAll('#patientList .list-item'), function (el) {
-        el.onclick = function () { location.hash = '#/patient/' + el.dataset.pid; };
-      });
-      Array.prototype.forEach.call(document.querySelectorAll('#patientList .row-del'), function (el) {
-        el.onclick = function (e) {
-          e.stopPropagation();
-          var p = findPatient(el.dataset.pid);
-          if (!p) return;
-          if (!confirm('删除患者「' + p.name + '」及其全部 ' + p.visits.length + ' 条就诊记录？删除后无法恢复！')) return;
-          patients = patients.filter(function (x) { return x.id !== p.id; });
-          persist();
-          renderList();
-        };
-      });
-      Array.prototype.forEach.call(document.querySelectorAll('#patientList .folder-del'), function (el) {
-        el.onclick = function (e) {
-          e.stopPropagation();
-          var f = el.dataset.folder;
-          if (!confirm('解散分组「' + f + '」？组内患者会回到「未分组」，病例不删除。')) return;
-          patients.forEach(function (p) { if ((p.folder || '').trim() === f) p.folder = ''; });
-          persist();
-          renderList();
-        };
-      });
-    }
-    patientSearch.addEventListener('input', renderList);
-    renderList();
+    document.getElementById('newGroupBtn').onclick = function () {
+      var name = prompt('新分组名称（如：脾胃病组）：');
+      if (!name || !name.trim()) return;
+      name = name.trim();
+      if (groupRegistry.indexOf(name) < 0) { groupRegistry.push(name); persistGroups(); }
+      collapsedGroups[name] = false;
+      renderGroups();
+    };
+    document.getElementById('manageBtn').onclick = function () {
+      manageMode = !manageMode;
+      checkedPatients = {};
+      document.getElementById('manageBtn').classList.toggle('active', manageMode);
+      renderGroups();
+      renderManageBar();
+    };
 
     document.getElementById('exportBtn').onclick = exportData;
     document.getElementById('importBtn').onclick = function () {
       document.getElementById('importFile').click();
     };
     document.getElementById('importFile').onchange = importData;
+
+    renderGroups();
+    renderManageBar();
+  }
+
+  // 患者行
+  function patientRow(p) {
+    var visits = sortedVisits(p);
+    var last = visits[0];
+    var sub = [];
+    if (last && last.tcmDiagnosis) sub.push(last.tcmDiagnosis);
+    if (last && last.syndrome) sub.push(last.syndrome);
+    var groupsTxt = patientFolders(p).join('、');
+    return '<div class="list-item" data-pid="' + p.id + '">' +
+      (manageMode ? '<input type="checkbox" class="row-check" data-pid="' + p.id + '"' + (checkedPatients[p.id] ? ' checked' : '') + '>' : '') +
+      '<div class="row1"><span class="name">' + esc(p.name) +
+      (p.gender ? ' <span class="hint">' + esc(p.gender) + (p.age ? ' · ' + esc(p.age) + '岁' : '') + '</span>' : '') +
+      (groupsTxt ? ' <span class="hint">📁' + esc(groupsTxt) + '</span>' : '') +
+      '</span><span class="date">' + p.visits.length + ' 次就诊' +
+      '<span class="row-del" data-pid="' + p.id + '" title="删除该患者">×</span></span></div>' +
+      '<div class="sub">' + esc(sub.join(' · ') || '—') + '</div></div>';
+  }
+
+  function bindPatientRows(box) {
+    Array.prototype.forEach.call(box.querySelectorAll('.list-item'), function (el) {
+      el.onclick = function (e) {
+        if (e.target.classList && (e.target.classList.contains('row-del') || e.target.classList.contains('row-check'))) return;
+        location.hash = '#/patient/' + el.dataset.pid;
+      };
+    });
+    Array.prototype.forEach.call(box.querySelectorAll('.row-del'), function (el) {
+      el.onclick = function (e) {
+        e.stopPropagation();
+        var p = findPatient(el.dataset.pid);
+        if (!p) return;
+        if (!confirm('删除患者「' + p.name + '」及其全部 ' + p.visits.length + ' 条就诊记录？删除后无法恢复！')) return;
+        patients = patients.filter(function (x) { return x.id !== p.id; });
+        persist();
+        renderGroups();
+      };
+    });
+    Array.prototype.forEach.call(box.querySelectorAll('.row-check'), function (el) {
+      el.onchange = function () {
+        if (el.checked) checkedPatients[el.dataset.pid] = 1;
+        else delete checkedPatients[el.dataset.pid];
+        renderManageBar();
+      };
+    });
+  }
+
+  // 组内新建患者（含同人检测：已有患者可直接入组并开新就诊）
+  function groupCreatorHTML(g) {
+    if (creatingInGroup !== g) return '';
+    return '<div class="group-create"><input id="gcInput" placeholder="患者姓名" autocomplete="off"><div id="gcMatch"></div></div>';
+  }
+  function bindGroupCreator(g) {
+    var input = document.getElementById('gcInput');
+    if (!input) return;
+    var match = document.getElementById('gcMatch');
+    input.focus();
+    input.addEventListener('input', function () {
+      var q = input.value.trim();
+      if (!q) { match.innerHTML = ''; return; }
+      var matched = patients.filter(function (p) { return p.name.indexOf(q) >= 0; });
+      var h = '';
+      matched.forEach(function (p) {
+        var inGroup = patientFolders(p).indexOf(g) >= 0;
+        h += '<div class="match-item" data-pid="' + p.id + '">' + esc(p.name) +
+          '<div class="sub">已有 ' + p.visits.length + ' 次就诊' +
+          (inGroup ? '（已在本组）' : '（加入本组）') + ' → 为其新建就诊</div></div>';
+      });
+      h += '<div class="match-item new" data-new="1">＋ 新建患者「' + esc(q) + '」' + (g ? '（加入' + esc(g) + '）' : '') + '</div>';
+      match.innerHTML = '<div class="match-box">' + h + '</div>';
+      Array.prototype.forEach.call(match.querySelectorAll('.match-item'), function (el) {
+        el.onclick = function () {
+          var p;
+          if (el.dataset.new) {
+            p = { id: uid(), name: q, gender: '', age: '', note: '', folders: g ? [g] : [], visits: [] };
+            patients.push(p);
+          } else {
+            p = findPatient(el.dataset.pid);
+            if (p && g) addToGroup(p, g);
+          }
+          persist();
+          creatingInGroup = null;
+          createVisitAndGo(p);
+        };
+      });
+    });
+  }
+
+  function renderGroups() {
+    var q = (document.getElementById('patientSearch') || {}).value;
+    q = (q || '').trim().toLowerCase();
+    var groups = allGroups();
+    var area = document.getElementById('groupArea');
+    if (!area) return;
+
+    var searching = !!q;
+    function matchPatient(p) {
+      if (!searching) return true;
+      if (p.name.toLowerCase().indexOf(q) >= 0) return true;
+      return p.visits.some(function (v) {
+        return (v.tcmDiagnosis + ' ' + v.syndrome + ' ' + v.westernDiagnosis).toLowerCase().indexOf(q) >= 0;
+      });
+    }
+
+    var h = '';
+    var sections = groups.concat(['']); // '' = 未分组
+    sections.forEach(function (g) {
+      var members = patients.filter(function (p) {
+        return g ? patientFolders(p).indexOf(g) >= 0 : patientFolders(p).length === 0;
+      }).filter(matchPatient);
+      members.sort(function (a, b) {
+        var la = sortedVisits(a)[0], lb = sortedVisits(b)[0];
+        return (lb ? lb.updatedAt : 0) - (la ? la.updatedAt : 0);
+      });
+      if (searching && !members.length) return; // 搜索时隐藏空组
+      if (!g && !members.length && groups.length) return; // 有组时未分组为空则不显示
+      var collapsed = !searching && collapsedGroups[g];
+      var title = g ? '📁 ' + g : '未分组';
+      h += '<div class="folder-sec">' +
+        '<div class="folder-head" data-g="' + esc(g) + '">' +
+        '<span class="fh-arrow">' + (collapsed ? '▸' : '▾') + '</span><span class="fh-name">' + esc(title) + '</span>' +
+        '<span class="fh-count">' + members.length + '</span>' +
+        '<span class="fh-add" data-g="' + esc(g) + '" title="在此组新建患者">＋</span>' +
+        (g ? '<span class="fh-del" data-g="' + esc(g) + '" title="删除该组">×</span>' : '') +
+        '</div>';
+      if (!collapsed) {
+        h += '<div class="folder-body">';
+        h += members.map(patientRow).join('') || '<div class="empty" style="padding:16px">暂无患者</div>';
+        h += '</div>' + groupCreatorHTML(g);
+      }
+      h += '</div>';
+    });
+    if (!groups.length && !patients.length) {
+      h = '<div class="empty">还没有患者。点组名右侧的 ＋ 新建患者；点「＋新建分组」建组。</div>' +
+        '<div class="folder-sec"><div class="folder-head" data-g=""><span class="fh-arrow">▾</span><span class="fh-name">未分组</span><span class="fh-add" data-g="">＋</span></div>' +
+        '<div class="folder-body"></div>' + groupCreatorHTML('') + '</div>';
+    }
+    area.innerHTML = h;
+
+    Array.prototype.forEach.call(area.querySelectorAll('.folder-head'), function (el) {
+      el.onclick = function (e) {
+        if (e.target.classList && (e.target.classList.contains('fh-add') || e.target.classList.contains('fh-del'))) return;
+        var g = el.dataset.g;
+        collapsedGroups[g] = !collapsedGroups[g];
+        renderGroups();
+      };
+    });
+    Array.prototype.forEach.call(area.querySelectorAll('.fh-add'), function (el) {
+      el.onclick = function (e) {
+        e.stopPropagation();
+        creatingInGroup = creatingInGroup === el.dataset.g ? null : el.dataset.g;
+        renderGroups();
+      };
+    });
+    Array.prototype.forEach.call(area.querySelectorAll('.fh-del'), function (el) {
+      el.onclick = function (e) {
+        e.stopPropagation();
+        var g = el.dataset.g;
+        if (!confirm('删除分组「' + g + '」？组内患者的病例不删除，会回到「未分组」。')) return;
+        groupRegistry = groupRegistry.filter(function (x) { return x !== g; });
+        patients.forEach(function (p) { removeFromGroup(p, g); });
+        persistGroups();
+        persist();
+        renderGroups();
+      };
+    });
+    bindPatientRows(area);
+    if (creatingInGroup !== null) bindGroupCreator(creatingInGroup);
+  }
+
+  function renderManageBar() {
+    var bar = document.getElementById('manageBar');
+    if (!bar) return;
+    if (!manageMode) { bar.innerHTML = ''; return; }
+    var count = Object.keys(checkedPatients).length;
+    var groups = allGroups();
+    bar.innerHTML = '<div class="manage-bar">已选 <b>' + count + '</b> 人　' +
+      '<select id="moveTarget"><option value="">选择分组…</option>' +
+      groups.map(function (g) { return '<option>' + esc(g) + '</option>'; }).join('') + '</select>' +
+      '<button class="small" id="moveBtn">移动到该组</button>' +
+      '<button class="small secondary" id="alsoAddBtn">同时加入该组</button>' +
+      '<button class="small secondary" id="ungroupBtn">移出所有组</button></div>';
+    if (!count) {
+      ['moveBtn', 'alsoAddBtn', 'ungroupBtn'].forEach(function (id) {
+        document.getElementById(id).disabled = true;
+      });
+      return;
+    }
+    function checkedList() {
+      return patients.filter(function (p) { return checkedPatients[p.id]; });
+    }
+    document.getElementById('moveBtn').onclick = function () {
+      var t = document.getElementById('moveTarget').value;
+      if (!t) { alert('先选一个目标分组'); return; }
+      checkedList().forEach(function (p) { p.folders = [t]; });
+      persist();
+      checkedPatients = {};
+      renderGroups();
+      renderManageBar();
+    };
+    document.getElementById('alsoAddBtn').onclick = function () {
+      var t = document.getElementById('moveTarget').value;
+      if (!t) { alert('先选一个目标分组'); return; }
+      checkedList().forEach(function (p) { addToGroup(p, t); });
+      persist();
+      checkedPatients = {};
+      renderGroups();
+      renderManageBar();
+    };
+    document.getElementById('ungroupBtn').onclick = function () {
+      checkedList().forEach(function (p) { p.folders = []; });
+      persist();
+      checkedPatients = {};
+      renderGroups();
+      renderManageBar();
+    };
   }
 
   function createVisitAndGo(p) {
@@ -592,12 +757,11 @@
       '<option' + (p.gender === '女' ? ' selected' : '') + '>女</option></select></div>' +
       '<div class="field"><label>年龄</label><input data-pfield="age" value="' + esc(p.age) + '"></div>' +
       '</div>' +
-      '<div class="field-row">' +
-      '<div class="field"><label>分组（文件夹，可填新名字建组）</label>' +
-      '<input data-pfield="folder" list="folderList" value="' + esc(p.folder || '') + '" placeholder="如：脾胃病组">' +
+      '<div class="field"><label>所属分组（可同时在多个组；输入组名回车加入）</label>' +
+      '<div class="multi" id="folderChips"></div>' +
+      '<input id="folderInput" list="folderList" placeholder="如：脾胃病组" autocomplete="off">' +
       '<datalist id="folderList">' + folderSet.map(function (f) { return '<option value="' + esc(f) + '">'; }).join('') + '</datalist></div>' +
       '<div class="field"><label>备注（区分同名患者）</label><input data-pfield="note" value="' + esc(p.note) + '"></div>' +
-      '</div>' +
       '</div>' +
       '<div class="toolbar"><button id="newVisitBtn">＋ 新建就诊记录</button></div>' +
       '<div id="visitList"></div>' +
@@ -638,6 +802,35 @@
         headerTitle.textContent = p.name;
         setStatus('已保存 ' + now());
       });
+    });
+
+    // 分组 chips 编辑
+    function renderFolderChips() {
+      var box = document.getElementById('folderChips');
+      var fs = patientFolders(p);
+      box.innerHTML = fs.map(function (f, i) {
+        return '<span class="multi-chip">' + esc(f) + '<span class="mc-del" data-i="' + i + '">×</span></span>';
+      }).join('');
+      Array.prototype.forEach.call(box.querySelectorAll('.mc-del'), function (el) {
+        el.onclick = function () {
+          removeFromGroup(p, fs[Number(el.dataset.i)]);
+          persist();
+          renderFolderChips();
+        };
+      });
+    }
+    renderFolderChips();
+    var folderInput = document.getElementById('folderInput');
+    folderInput.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      var g = folderInput.value.trim();
+      if (!g) return;
+      e.preventDefault();
+      if (groupRegistry.indexOf(g) < 0) { groupRegistry.push(g); persistGroups(); }
+      addToGroup(p, g);
+      persist();
+      folderInput.value = '';
+      renderFolderChips();
     });
 
     document.getElementById('newVisitBtn').onclick = function () { createVisitAndGo(p); };
@@ -736,7 +929,7 @@
 
       '<div class="card"><h2>诊断与治法</h2>' +
       '<div class="field-row">' +
-      '<div class="field quick-wrap"><label>中医诊断 / 辨证（病名与证型都可加，可多个）</label>' +
+      '<div class="field quick-wrap"><label>中医诊断 / 辨证</label>' +
       '<div class="multi" id="tcmMulti"></div>' +
       '<input id="diagInput" placeholder="如：胃脘痛 / wt / 肝郁脾虚证" autocomplete="off">' +
       '<div id="diagResults" class="quick-results hidden"></div></div>' +
@@ -758,11 +951,12 @@
       '<div id="herbGrid"></div>' +
       '<div id="herbSkipHint" class="hint"></div>' +
       '<div id="pairRow"></div>' +
-      '<div id="tempRow"></div>' +
       '<div class="field mt8"><label>方名 / 加减说明</label>' +
       '<textarea data-field="prescriptionNote" rows="2" placeholder="如：小柴胡汤合二陈汤加减">' + esc(v.prescriptionNote) + '</textarea></div>' +
       '<div id="noteFormulaChips"></div>' +
       '</div>' +
+
+      '<div class="card"><div id="tempRow"></div></div>' +
 
       '<div class="card"><h2>备注</h2>' +
       '<div class="field"><textarea data-field="notes" rows="4" placeholder="针灸及其他疗法、医嘱、跟诊体会、老师讲解要点等">' + esc(v.notes) + '</textarea></div>' +
@@ -821,7 +1015,7 @@
       var text = v.condition + ' ' + v.tcmDiagnosis + ' ' + v.syndrome + ' ' + v.westernDiagnosis;
       var terms = detectTerms(text);
       if (!terms.length) { termStrip.innerHTML = ''; return; }
-      termStrip.innerHTML = '<div class="term-strip"><span class="hint">识别到（悬停/点击查看）：</span>' +
+      termStrip.innerHTML = '<div class="sugg-label">识别到（悬停/点击查看）：</div><div class="term-strip">' +
         terms.map(function (t) { return '<span class="term-chip" data-term="' + esc(t) + '">' + esc(t) + '</span>'; }).join('') +
         '</div>';
       Array.prototype.forEach.call(termStrip.querySelectorAll('.term-chip'), function (el) {
@@ -882,7 +1076,7 @@
       });
       sug = sug.slice(0, 6);
       if (!sug.length) { treatSugg.innerHTML = ''; return; }
-      treatSugg.innerHTML = '<div class="term-strip"><span class="hint">推荐治法（悬停看详解，点击填入）：</span>' +
+      treatSugg.innerHTML = '<div class="sugg-label">推荐治法：</div><div class="term-strip">' +
         sug.map(function (s) { return '<span class="rec-chip" data-t="' + esc(s) + '">' + esc(s) + '</span>'; }).join('') + '</div>';
       Array.prototype.forEach.call(treatSugg.querySelectorAll('.rec-chip'), function (el) {
         el.addEventListener('mouseenter', function () { showTreatPop(el, el.dataset.t); });
@@ -1193,7 +1387,7 @@
       var pairs = findPairs();
       if (pairRow) {
         pairRow.innerHTML = pairs.length
-          ? '<div class="term-strip"><span class="hint">对药（悬停/点击看方解）：</span>' +
+          ? '<div class="sugg-label">对药（悬停/点击看方解）：</div><div class="term-strip">' +
             pairs.map(function (pr, i) {
               return '<span class="pair-chip" data-i="' + i + '">' + esc(pr.a) + '·' + esc(pr.b) + '</span>';
             }).join('') + '</div>'
@@ -1210,7 +1404,8 @@
         });
       }
       if (tempRow) {
-        if (!v.herbs.length) { tempRow.innerHTML = ''; return; }
+        if (!v.herbs.length) { tempRow.innerHTML = ''; tempRow.parentElement.style.display = 'none'; return; }
+        tempRow.parentElement.style.display = '';
         // 分区归药（只显示有药的区，自动换行，无需横滑）
         var zones = {};
         TEMP_ZONES.forEach(function (z) { zones[z] = []; });
@@ -1422,7 +1617,7 @@
     setHeader('知识库', true, '#/');
     setStatus('');
 
-    var tabs = ['全部', '疾病', '舌脉', '中药', '方剂', '我的添加'];
+    var tabs = ['全部', '疾病', '舌脉', '中药', '方剂', '西医诊断', '西药', '检验', '症状', '我的添加'];
     app.innerHTML =
       '<div class="container">' +
       '<div class="toolbar"><input type="search" id="kbSearch" placeholder="如：高血压 / 舌红少苔 / 柴胡 / xcht" value="' + esc(kbState.q) + '"></div>' +
@@ -1453,21 +1648,27 @@
     renderKBResults();
   }
 
-  // 卡片操作按钮：内置条目可编辑（编辑后存为个人版本覆盖），自定义条目可编辑可删除
+  // 卡片操作按钮：所有条目可编辑；自定义删除即移除，内置删除为屏蔽（可用「添加我的知识」重新录入）
   function cardActions(type, name, customIdx) {
     var h = '<div class="kb-actions">' +
       '<button class="secondary small" data-edit-type="' + type + '" data-edit-name="' + esc(name) + '"' +
-      (customIdx !== undefined && customIdx !== null ? ' data-edit-idx="' + customIdx + '"' : '') + '>编辑</button>';
-    if (customIdx !== undefined && customIdx !== null) {
-      h += ' <button class="danger small" data-del-type="' + type + '" data-del-i="' + customIdx + '">删除</button>';
-    }
+      (customIdx !== undefined && customIdx !== null ? ' data-edit-idx="' + customIdx + '"' : '') + '>编辑</button>' +
+      ' <button class="danger small" data-del-type="' + type + '" data-del-name="' + esc(name) + '"' +
+      (customIdx !== undefined && customIdx !== null ? ' data-del-i="' + customIdx + '"' : '') + '>删除</button>';
     return h + '</div>';
   }
+  // 折叠卡片：默认只显示标题行，点击展开详情
+  function kbCard(type, name, summary, bodyHTML, customIdx) {
+    return '<div class="kb-card collapsed">' +
+      '<div class="kb-head"><span class="kb-htitle">' + esc(name) + '</span>' +
+      (summary ? '<span class="kb-summary">' + esc(summary) + '</span>' : '') +
+      '<span class="kb-toggle">▸</span></div>' +
+      '<div class="kb-body">' + bodyHTML + cardActions(type, name, customIdx) + '</div></div>';
+  }
   function diseaseCard(d, customIdx) {
-    var h = '<div class="kb-card"><div class="kb-title">' + esc(d.name) + '</div>' +
-      (d.alias ? '<div class="kb-meta">中医病名/相关：' + esc(d.alias) + '</div>' : '');
+    var body = (d.alias ? '<div class="kb-row"><b>中医病名/相关</b>　' + esc(d.alias) + '</div>' : '');
     (d.syndromes || []).forEach(function (s) {
-      h += '<div class="kb-syn"><div class="kb-syn-name">' + esc(s.name) + '</div>' +
+      body += '<div class="kb-syn"><div class="kb-syn-name">' + esc(s.name) + '</div>' +
         (s.symptoms ? '<div class="kb-row"><b>症状</b>　' + esc(s.symptoms) + '</div>' : '') +
         (s.tongue ? '<div class="kb-row"><b>舌象</b>　' + esc(s.tongue) + '</div>' : '') +
         (s.pulse ? '<div class="kb-row"><b>脉象</b>　' + esc(s.pulse) + '</div>' : '') +
@@ -1475,34 +1676,47 @@
         (s.formulas ? '<div class="kb-row"><b>代表方</b>　' + esc(s.formulas) + '</div>' : '') +
         '</div>';
     });
-    if (d.note) h += '<div class="kb-row">' + esc(d.note).replace(/\n/g, '<br>') + '</div>';
-    return h + cardActions('diseases', d.name, customIdx) + '</div>';
+    if (d.note) body += '<div class="kb-row">' + esc(d.note).replace(/\n/g, '<br>') + '</div>';
+    var summary = (d.alias || '') + ((d.syndromes || []).length ? '（' + d.syndromes.length + '个证型）' : '');
+    return kbCard('diseases', d.name, summary, body, customIdx);
   }
   function signCard(s, customIdx) {
-    return '<div class="kb-card"><div class="kb-title">' + esc(s.term) + '</div>' +
-      '<div class="kb-meta">' + esc(s.category) + '</div>' +
-      '<div class="kb-row"><b>指向</b>　' + esc(s.indicates) + '</div>' +
+    var body = '<div class="kb-row"><b>指向</b>　' + esc(s.indicates) + '</div>' +
       (s.related ? '<div class="kb-row"><b>说明</b>　' + esc(s.related) + '</div>' : '') +
-      (s.formulas ? '<div class="kb-row"><b>常考虑方</b>　' + esc(s.formulas) + '</div>' : '') +
-      cardActions('signs', s.term, customIdx) +
-      '</div>';
+      (s.formulas ? '<div class="kb-row"><b>常考虑方</b>　' + esc(s.formulas) + '</div>' : '');
+    return kbCard('signs', s.term, (s.category || '') + '　' + (s.indicates || ''), body, customIdx);
   }
   function herbCard(h, customIdx) {
-    return '<div class="kb-card"><div class="kb-title">' + esc(h.name) +
-      (h.dosage ? ' <span class="hint">常用 ' + esc(h.dosage) + '</span>' : '') + '</div>' +
-      (h.nature ? '<div class="kb-row"><b>性味归经</b>　' + esc(h.nature) + '</div>' : '') +
+    var body = (h.nature ? '<div class="kb-row"><b>性味归经</b>　' + esc(h.nature) + '</div>' : '') +
       (h.effect ? '<div class="kb-row"><b>功效</b>　' + esc(h.effect) + '</div>' : '') +
-      (h.classic ? '<div class="kb-row"><b>经典</b>　' + esc(h.classic) + '</div>' : '') +
-      cardActions('herbs', h.name, customIdx) +
-      '</div>';
+      (h.classic ? '<div class="kb-row"><b>经典</b>　' + esc(h.classic) + '</div>' : '');
+    return kbCard('herbs', h.name, (h.dosage ? h.dosage + '　' : '') + (h.effect || '').slice(0, 24), body, customIdx);
   }
   function formulaCard(f, customIdx) {
-    return '<div class="kb-card"><div class="kb-title">' + esc(f.name) + '</div>' +
-      (f.composition ? '<div class="kb-row"><b>组成</b>　' + esc(f.composition) + '</div>' : '') +
+    var body = (f.composition ? '<div class="kb-row"><b>组成</b>　' + esc(f.composition) + '</div>' : '') +
       (f.effect ? '<div class="kb-row"><b>功用</b>　' + esc(f.effect) + '</div>' : '') +
-      (f.indications ? '<div class="kb-row"><b>主治</b>　' + esc(f.indications) + '</div>' : '') +
-      cardActions('formulas', f.name, customIdx) +
-      '</div>';
+      (f.indications ? '<div class="kb-row"><b>主治</b>　' + esc(f.indications) + '</div>' : '');
+    return kbCard('formulas', f.name, f.effect || '', body, customIdx);
+  }
+  function westernCard(w, customIdx) {
+    return kbCard('western', w.name, (w.brief || '').slice(0, 30),
+      (w.brief ? '<div class="kb-row">' + esc(w.brief) + '</div>' : ''), customIdx);
+  }
+  function drugCard(d, customIdx) {
+    var body = (d.alias ? '<div class="kb-row"><b>别名/商品名</b>　' + esc(d.alias) + '</div>' : '') +
+      (d.usage ? '<div class="kb-row"><b>用途</b>　' + esc(d.usage) + '</div>' : '') +
+      (d.note ? '<div class="kb-row"><b>注意</b>　' + esc(d.note) + '</div>' : '');
+    return kbCard('drugs', d.name, (d.category || '') + '　' + (d.usage || '').slice(0, 22), body, customIdx);
+  }
+  function labCard(l, customIdx) {
+    var body = (l.normal ? '<div class="kb-row"><b>正常范围</b>　' + esc(l.normal) + '</div>' : '') +
+      (l.meaning ? '<div class="kb-row"><b>临床意义</b>　' + esc(l.meaning) + '</div>' : '');
+    return kbCard('labs', l.term, (l.category || '') + '　正常：' + (l.normal || ''), body, customIdx);
+  }
+  function symptomCard(s, customIdx) {
+    var body = (s.meaning ? '<div class="kb-row"><b>含义</b>　' + esc(s.meaning) + '</div>' : '') +
+      (s.related ? '<div class="kb-row"><b>常见方向</b>　' + esc(s.related) + '</div>' : '');
+    return kbCard('symptoms', s.term, (s.meaning || '').slice(0, 24), body, customIdx);
   }
 
   function renderKBResults() {
@@ -1554,16 +1768,63 @@
         if (matchPY(f.py, f.name)) { out += formulaCard(f, i); total++; }
       });
     }
+    if (tab === '全部' || tab === '西医诊断' || tab === '我的添加') {
+      vis(WESTERN, 'western').forEach(function (w) {
+        if (matchPY(w.py, w.name) || (q && w.brief && w.brief.indexOf(q) >= 0)) { out += westernCard(w); total++; }
+      });
+      if (tab !== '西医诊断') customKB.western.forEach(function (w, i) {
+        if (matchPY(w.py, w.name)) { out += westernCard(w, i); total++; }
+      });
+    }
+    if (tab === '全部' || tab === '西药' || tab === '我的添加') {
+      vis(DRUGS, 'drugs').forEach(function (d) {
+        if (matchPY(d.py, d.name) || matchText(d.alias, d.usage, d.category)) { out += drugCard(d); total++; }
+      });
+      if (tab !== '西药') customKB.drugs.forEach(function (d, i) {
+        if (matchPY(d.py, d.name) || matchText(d.alias)) { out += drugCard(d, i); total++; }
+      });
+    }
+    if (tab === '全部' || tab === '检验' || tab === '我的添加') {
+      vis(LABS, 'labs').forEach(function (l) {
+        if (matchText(l.term, l.alias, l.normal, l.meaning)) { out += labCard(l); total++; }
+      });
+      if (tab !== '检验') customKB.labs.forEach(function (l, i) {
+        if (matchText(l.term, l.alias)) { out += labCard(l, i); total++; }
+      });
+    }
+    if (tab === '全部' || tab === '症状' || tab === '我的添加') {
+      vis(SYMPTOMS, 'symptoms').forEach(function (s) {
+        if (matchText(s.term, s.alias, s.meaning, s.related)) { out += symptomCard(s); total++; }
+      });
+      if (tab !== '症状') customKB.symptoms.forEach(function (s, i) {
+        if (matchText(s.term, s.alias)) { out += symptomCard(s, i); total++; }
+      });
+    }
 
     if (!total) {
       out = '<div class="empty">' + (q ? '没有找到「' + esc(kbState.q) + '」相关内容<br>可点击上方「添加我的知识」把它录入你的知识库' : '输入关键词开始查询') + '</div>';
     }
     document.getElementById('kbResults').innerHTML = out;
 
-    Array.prototype.forEach.call(document.querySelectorAll('[data-del-type]'), function (el) {
+    // 卡片点击标题行展开/收起
+    Array.prototype.forEach.call(document.querySelectorAll('.kb-card .kb-head'), function (el) {
       el.onclick = function () {
-        if (!confirm('删除这条自定义知识？')) return;
-        customKB[el.dataset.delType].splice(Number(el.dataset.delI), 1);
+        el.parentElement.classList.toggle('collapsed');
+      };
+    });
+
+    Array.prototype.forEach.call(document.querySelectorAll('[data-del-type]'), function (el) {
+      el.onclick = function (e) {
+        e.stopPropagation();
+        var type = el.dataset.delType;
+        var name = el.dataset.delName;
+        if (el.dataset.delI !== undefined && el.dataset.delI !== '') {
+          if (!confirm('删除这条自定义知识「' + name + '」？')) return;
+          customKB[type].splice(Number(el.dataset.delI), 1);
+        } else {
+          if (!confirm('「' + name + '」是内置条目，删除后将不再显示（如需找回可用「添加我的知识」重新录入）。确定删除？')) return;
+          if (customKB.suppress.indexOf(type + '|' + name) < 0) customKB.suppress.push(type + '|' + name);
+        }
         persistKB();
         TERM_INDEX = null;
         TREAT_INDEX = null;
@@ -1572,15 +1833,16 @@
     });
     // 编辑（内置条目编辑后存为个人版本覆盖；自定义条目直接改）
     Array.prototype.forEach.call(document.querySelectorAll('[data-edit-type]'), function (el) {
-      el.onclick = function () {
+      el.onclick = function (e) {
+        e.stopPropagation();
         var type = el.dataset.editType;
         var name = el.dataset.editName;
         var obj, target = {};
-        if (el.dataset.editIdx !== undefined) {
+        if (el.dataset.editIdx !== undefined && el.dataset.editIdx !== '') {
           target.customIdx = Number(el.dataset.editIdx);
           obj = customKB[type][target.customIdx];
         } else {
-          var builtin = { diseases: DISEASES, signs: SIGNS, herbs: HERBS, formulas: FORMULAS }[type];
+          var builtin = { diseases: DISEASES, signs: SIGNS, herbs: HERBS, formulas: FORMULAS, western: WESTERN, drugs: DRUGS, labs: LABS, symptoms: SYMPTOMS }[type];
           for (var i = 0; i < builtin.length; i++) {
             if ((builtin[i].name || builtin[i].term) === name) { obj = builtin[i]; break; }
           }
@@ -1599,9 +1861,13 @@
       herbs: [['name', '药名*'], ['py', '拼音首字母（如 ch）'], ['dosage', '常用剂量（如 10g）'], ['nature', '性味归经'], ['effect', '功效'], ['classic', '经典论述（选填）']],
       formulas: [['name', '方名*'], ['py', '拼音首字母（如 xcht）'], ['composition', '组成及剂量（如：柴胡12g 黄芩9g……）'], ['effect', '功用'], ['indications', '主治']],
       diseases: [['name', '病名*'], ['alias', '中医病名/别名'], ['note', '内容（证型、症状、方药等，自由记录）']],
-      signs: [['term', '舌象/脉象*'], ['category', '类别（舌象 或 脉象）'], ['indicates', '指向证候'], ['related', '说明'], ['formulas', '常考虑方']]
+      signs: [['term', '舌象/脉象*'], ['category', '类别（舌象 或 脉象）'], ['indicates', '指向证候'], ['related', '说明'], ['formulas', '常考虑方']],
+      western: [['name', '西医病名*'], ['py', '拼音首字母（如 tnb）'], ['brief', '解释（诊断要点、注意等）']],
+      drugs: [['name', '西药名*'], ['py', '拼音首字母（如 amxl）'], ['alias', '别名/商品名'], ['category', '类别（如 降压/降糖/抗生素）'], ['usage', '用途'], ['note', '注意事项']],
+      labs: [['term', '指标名*'], ['alias', '别名（如 血氧）'], ['category', '类别（如 血液检查）'], ['normal', '正常范围'], ['meaning', '临床意义']],
+      symptoms: [['term', '症状名*'], ['alias', '别名/口语说法（如 嗓子痛）'], ['meaning', '含义'], ['related', '常见证候方向']]
     };
-    var typeNames = { herbs: '中药', formulas: '方剂', diseases: '疾病', signs: '舌脉' };
+    var typeNames = { herbs: '中药', formulas: '方剂', diseases: '疾病', signs: '舌脉', western: '西医诊断', drugs: '西药', labs: '检验', symptoms: '症状' };
 
     // 编辑内置疾病时，把结构化证型转为文本方便修改
     var preObj = presetObj ? JSON.parse(JSON.stringify(presetObj)) : null;
@@ -1627,7 +1893,7 @@
       var fields = typeFields[typeSel.value];
       document.getElementById('ckFields').innerHTML = fields.map(function (f) {
         var val = preObj ? (preObj[f[0]] || '') : '';
-        if (f[0] === 'note' || f[0] === 'related' || f[0] === 'composition' || f[0] === 'indications' || f[0] === 'classic') {
+        if (f[0] === 'note' || f[0] === 'related' || f[0] === 'composition' || f[0] === 'indications' || f[0] === 'classic' || f[0] === 'brief' || f[0] === 'usage' || f[0] === 'meaning') {
           return '<div class="field"><label>' + f[1] + '</label><textarea data-ck="' + f[0] + '" rows="3">' + esc(val) + '</textarea></div>';
         }
         return '<div class="field"><label>' + f[1] + '</label><input data-ck="' + f[0] + '" value="' + esc(val) + '"></div>';
@@ -1681,7 +1947,8 @@
       version: 2,
       exportedAt: new Date().toISOString(),
       patients: patients,
-      customKB: customKB
+      customKB: customKB,
+      groups: groupRegistry
     };
     var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     var a = document.createElement('a');
@@ -1735,6 +2002,7 @@
           if (!p.id || !p.name) { return; }
           var totalV = (Array.isArray(p.visits) ? p.visits : []).length;
           p.visits = (Array.isArray(p.visits) ? p.visits : []).map(migrateVisit);
+          p.folders = Array.isArray(p.folders) ? p.folders : (p.folder ? [p.folder] : []);
           // 先按 id 精确匹配，再按 姓名+性别+年龄(±2岁) 匹配
           var target = findPatient(p.id);
           if (!target) {
@@ -1742,6 +2010,8 @@
           }
           if (target) {
             var added = mergeVisits(target, p.visits);
+            // 分组合并（并集）
+            patientFolders(p).forEach(function (f) { addToGroup(target, f); });
             if (added > 0) { mergedP++; addedV += added; }
             skippedV += totalV - added;
           } else {
@@ -1752,14 +2022,22 @@
         });
         var addKB = 0;
         if (data.customKB) {
-          ['herbs', 'formulas', 'diseases', 'signs'].forEach(function (k) {
+          ['herbs', 'formulas', 'diseases', 'signs', 'western', 'drugs', 'labs', 'symptoms'].forEach(function (k) {
             (data.customKB[k] || []).forEach(function (item) {
-              var key = k === 'signs' ? 'term' : 'name';
-              var dup = customKB[k].some(function (x) { return x[key] === item[key]; });
+              var key = (k === 'signs' || k === 'labs' || k === 'symptoms') ? 'term' : 'name';
+              var dup = (customKB[k] || []).some(function (x) { return x[key] === item[key]; });
               if (!dup) { customKB[k].push(item); addKB++; }
             });
           });
+          (data.customKB.suppress || []).forEach(function (s) {
+            if (customKB.suppress.indexOf(s) < 0) customKB.suppress.push(s);
+          });
         }
+        // 分组注册表合并
+        (data.groups || []).forEach(function (g) {
+          if (groupRegistry.indexOf(g) < 0) groupRegistry.push(g);
+        });
+        persistGroups();
         persist();
         persistKB();
         alert('导入完成：\n· 新建患者 ' + newP + ' 人\n· 合并到已有患者 ' + mergedP + ' 人（新增就诊 ' + addedV + ' 条）' +
