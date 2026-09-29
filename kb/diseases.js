@@ -455,7 +455,7 @@ var KB_DISEASES = [
   },
   {
     "name": "眩晕",
-    "alias": "眩冒、目眩",
+    "alias": "眩冒、目眩、头晕",
     "syndromes": [
       {
         "name": "肝阳上亢证",

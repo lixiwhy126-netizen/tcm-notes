@@ -162,6 +162,10 @@
           if (found.indexOf(seg) < 0) found.push(seg);
           return;
         }
+        // 聚合整体不是词条：先剔除落在聚合内的部分脉词条（来自直接包含匹配），再逐字拆分
+        found = found.filter(function (t) {
+          return !(t.charAt(0) === '脉' && seg.indexOf(t) >= 0);
+        });
         var body = seg.slice(1);
         for (i = 0; i < body.length; i++) {
           var one = '脉' + body[i];
