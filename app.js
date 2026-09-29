@@ -11,6 +11,9 @@
   var FORMULAS = typeof KB_FORMULAS !== 'undefined' ? KB_FORMULAS : [];
   var DISEASES = typeof KB_DISEASES !== 'undefined' ? KB_DISEASES : [];
   var SIGNS = typeof KB_SIGNS !== 'undefined' ? KB_SIGNS : [];
+  var WESTERN = typeof KB_WESTERN !== 'undefined' ? KB_WESTERN : [];
+  var LABS = typeof KB_LABS !== 'undefined' ? KB_LABS : [];
+  var PAIRS = typeof KB_PAIRS !== 'undefined' ? KB_PAIRS : [];
 
   // ---------- 数据存取 ----------
   function loadJSON(key, fallback) {
@@ -112,6 +115,14 @@
     });
     SIGNS.forEach(function (s) { addTerm(s.term, { type: 'sign', data: s }); });
     FORMULAS.forEach(function (f) { addTerm(f.name, { type: 'formula', data: f }); });
+    WESTERN.forEach(function (w) { addTerm(w.name, { type: 'western', data: w }); });
+    LABS.forEach(function (l) {
+      addTerm(l.term, { type: 'lab', data: l });
+      (l.alias || '').split(/[、,，]/).forEach(function (a) {
+        a = a.trim();
+        if (a && a.length >= 2) addTerm(a, { type: 'lab', data: l });
+      });
+    });
     // 自定义知识也参与识别
     customKB.diseases.forEach(function (d) { addTerm(d.name, { type: 'disease', data: d }); });
     customKB.signs.forEach(function (s) { addTerm(s.term, { type: 'sign', data: s }); });
@@ -120,13 +131,63 @@
   }
 
   // 在文本中识别词条（长词条优先，去掉被更长词条包含的）
+  var PULSE_CHARS = '浮沉迟数弦细滑涩弱濡紧缓洪结代虚实芤革伏牢疾动微大长短';
+  var COAT_CHARS = '薄白黄腻厚燥滑腐剥灰黑润少无积微黏';
+  function isSubseq(sub, str) {
+    var i = 0;
+    for (var j = 0; j < str.length && i < sub.length; j++) if (str[j] === sub[i]) i++;
+    return i === sub.length;
+  }
   function detectTerms(text) {
     if (!text) return [];
     var idx = buildTermIndex();
     var found = [];
-    for (var term in idx) {
+    var term, i;
+    // 1. 直接包含
+    for (term in idx) {
       if (term.length >= 2 && text.indexOf(term) >= 0) found.push(term);
     }
+    // 2. 两字病名宽松匹配：如「头颠顶部疼痛」→ 头痛（首尾字之间允许插入 0-4 个非标点字）
+    for (term in idx) {
+      if (term.length === 2 && (idx[term].type === 'disease' || idx[term].type === 'alias') && found.indexOf(term) < 0) {
+        var re = new RegExp(term.charAt(0) + '[^，。；、！？!?,;\\s]{0,4}' + term.charAt(1));
+        if (re.test(text)) found.push(term);
+      }
+    }
+    // 3. 脉象聚合拆分：「脉弦滑细数」→ 脉弦、脉细、脉滑、脉数；整体是已知相兼脉则用整体
+    var pm = text.match(new RegExp('脉[' + PULSE_CHARS + ']{1,6}', 'g'));
+    if (pm) {
+      pm.forEach(function (seg) {
+        if (idx[seg]) {
+          if (found.indexOf(seg) < 0) found.push(seg);
+          return;
+        }
+        var body = seg.slice(1);
+        for (i = 0; i < body.length; i++) {
+          var one = '脉' + body[i];
+          if (idx[one] && found.indexOf(one) < 0) found.push(one);
+        }
+      });
+    }
+    // 4. 舌苔复合描述拆分：「苔薄白微腻」→ 苔薄白、苔白腻（子序列匹配已知苔类词条）
+    var cm = text.match(new RegExp('苔[' + COAT_CHARS + ']{1,6}', 'g'));
+    if (cm) {
+      cm.forEach(function (seg) {
+        if (idx[seg]) {
+          if (found.indexOf(seg) < 0) found.push(seg);
+          return;
+        }
+        var body = seg.slice(1);
+        if (body.length < 2) return;
+        SIGNS.forEach(function (s) {
+          if (s.term.charAt(0) === '苔' && s.term.length >= 3 && s.term !== seg &&
+              isSubseq(s.term.slice(1), body) && found.indexOf(s.term) < 0) {
+            found.push(s.term);
+          }
+        });
+      });
+    }
+    // 去掉被更长词条包含的短词条
     found = found.filter(function (t) {
       return !found.some(function (o) { return o !== t && o.indexOf(t) >= 0; });
     });
@@ -165,6 +226,17 @@
       if (data.composition) h += '<div class="kp-row"><b>组成</b>　' + esc(data.composition) + '</div>';
       if (data.effect) h += '<div class="kp-row"><b>功用</b>　' + esc(data.effect) + '</div>';
       if (data.indications) h += '<div class="kp-row"><b>主治</b>　' + esc(data.indications) + '</div>';
+    } else if (type === 'western') {
+      h += '<div class="kp-title">' + esc(data.name) + '<span class="kp-meta">　西医疾病</span></div>';
+      if (data.brief) h += '<div class="kp-row">' + esc(data.brief) + '</div>';
+    } else if (type === 'lab') {
+      h += '<div class="kp-title">' + esc(data.term) + '<span class="kp-meta">　' + esc(data.category || '') + '</span></div>';
+      if (data.normal) h += '<div class="kp-row"><b>正常范围</b>　' + esc(data.normal) + '</div>';
+      if (data.meaning) h += '<div class="kp-row"><b>临床意义</b>　' + esc(data.meaning) + '</div>';
+    } else if (type === 'pair') {
+      h += '<div class="kp-title">' + esc(data.a) + ' — ' + esc(data.b) + '<span class="kp-meta">　对药</span></div>';
+      if (data.effect) h += '<div class="kp-row"><b>方解</b>　' + esc(data.effect) + '</div>';
+      if (data.source) h += '<div class="kp-row"><b>出处</b>　' + esc(data.source) + '</div>';
     }
     return h;
   }
@@ -241,7 +313,7 @@
   document.addEventListener('click', function (e) {
     if (!popEl || popEl.contains(e.target)) return;
     var t = e.target;
-    if (t.classList && (t.classList.contains('term-chip') || t.classList.contains('rec-chip') || t.classList.contains('hc-name'))) return;
+    if (t.classList && (t.classList.contains('term-chip') || t.classList.contains('rec-chip') || t.classList.contains('hc-name') || t.classList.contains('hc-usage') || t.classList.contains('pair-chip') || t.classList.contains('usage-opt'))) return;
     hidePop();
   });
 
@@ -526,12 +598,18 @@
       '</div>' +
 
       '<div class="card"><h2>诊断与治法</h2>' +
-      '<div class="field quick-wrap"><label>中医诊断（病名，可输拼音首字母，如 gxy → 高血压）</label>' +
+      '<div class="field-row">' +
+      '<div class="field quick-wrap"><label>中医诊断（可输拼音首字母，如 gxy）</label>' +
       '<input data-field="tcmDiagnosis" id="diagInput" value="' + esc(v.tcmDiagnosis) + '" placeholder="如：胃脘痛 / wt" autocomplete="off">' +
       '<div id="diagResults" class="quick-results hidden"></div></div>' +
-      '<div class="field"><label>辨证（证型，识别到的证型会出现在上方词条区，悬停/点击可看详解）</label><input data-field="syndrome" value="' + esc(v.syndrome) + '" placeholder="如：肝郁脾虚证"></div>' +
-      '<div class="field"><label>西医诊断</label><input data-field="westernDiagnosis" value="' + esc(v.westernDiagnosis) + '" placeholder="如：慢性胃炎"></div>' +
-      '<div class="field"><label>治法（下方推荐标签：悬停/点击看对应证型详解，点标签右侧填入）</label><input data-field="treatment" value="' + esc(v.treatment) + '" placeholder="如：平肝潜阳"></div>' +
+      '<div class="field quick-wrap"><label>西医诊断（可输拼音首字母，如 tn b → tnb）</label>' +
+      '<input data-field="westernDiagnosis" id="wdiagInput" value="' + esc(v.westernDiagnosis) + '" placeholder="如：慢性胃炎 / mxwy" autocomplete="off">' +
+      '<div id="wdiagResults" class="quick-results hidden"></div></div>' +
+      '</div>' +
+      '<div class="field-row">' +
+      '<div class="field"><label>辨证（证型，识别后可在词条区悬停看详解）</label><input data-field="syndrome" value="' + esc(v.syndrome) + '" placeholder="如：肝郁脾虚证"></div>' +
+      '<div class="field"><label>治法（下方推荐可悬停看详解、点击填入）</label><input data-field="treatment" value="' + esc(v.treatment) + '" placeholder="如：平肝潜阳"></div>' +
+      '</div>' +
       '<div id="treatSugg"></div>' +
       '</div>' +
 
@@ -541,8 +619,11 @@
       '<div id="herbResults" class="quick-results hidden"></div></div>' +
       '<div id="herbGrid"></div>' +
       '<div id="herbSkipHint" class="hint"></div>' +
-      '<div class="field mt8"><label>方名 / 加减说明</label>' +
-      '<textarea data-field="prescriptionNote" rows="2" placeholder="如：小柴胡汤加减">' + esc(v.prescriptionNote) + '</textarea></div>' +
+      '<div id="pairRow"></div>' +
+      '<div id="tempRow"></div>' +
+      '<div class="field mt8"><label>方名 / 加减说明（识别到的方剂会显示在下方，悬停可看方解）</label>' +
+      '<textarea data-field="prescriptionNote" rows="2" placeholder="如：小柴胡汤合二陈汤加减">' + esc(v.prescriptionNote) + '</textarea></div>' +
+      '<div id="noteFormulaChips"></div>' +
       '</div>' +
 
       '<div class="card"><h2>备注</h2>' +
@@ -581,7 +662,7 @@
             headerTitle.textContent = p.name + ' · ' + (v.visitDate || '就诊记录');
           }
         });
-        if (el.dataset.field === 'condition' || el.dataset.field === 'tcmDiagnosis' || el.dataset.field === 'syndrome') {
+        if (el.dataset.field === 'condition' || el.dataset.field === 'tcmDiagnosis' || el.dataset.field === 'syndrome' || el.dataset.field === 'westernDiagnosis' || el.dataset.field === 'prescriptionNote') {
           onContentChange(el.dataset.field);
         }
       });
@@ -600,7 +681,7 @@
     var autoPopTimer = null;
 
     function refreshTerms(autoPopAnchor) {
-      var text = v.condition + ' ' + v.tcmDiagnosis + ' ' + v.syndrome;
+      var text = v.condition + ' ' + v.tcmDiagnosis + ' ' + v.syndrome + ' ' + v.westernDiagnosis;
       var terms = detectTerms(text);
       if (!terms.length) { termStrip.innerHTML = ''; return; }
       termStrip.innerHTML = '<div class="term-strip"><span class="hint">识别到（悬停/点击查看）：</span>' +
@@ -671,6 +752,7 @@
     function onContentChange(field) {
       refreshTerms(field === 'condition' ? app.querySelector('[data-field="condition"]') : null);
       refreshTreatment();
+      if (field === 'prescriptionNote') refreshNoteFormulas();
     }
 
     // ===== 诊断病名联想 =====
@@ -703,12 +785,60 @@
       setTimeout(function () { diagResults.classList.add('hidden'); }, 150);
     });
 
+    // ===== 西医诊断联想 =====
+    var wdiagInput = document.getElementById('wdiagInput');
+    var wdiagResults = document.getElementById('wdiagResults');
+    wdiagInput.addEventListener('input', function () {
+      var q = wdiagInput.value.trim().toLowerCase();
+      if (!q) { wdiagResults.classList.add('hidden'); return; }
+      var items = WESTERN.filter(function (w) {
+        return (w.py && w.py.indexOf(q) === 0) || w.name.toLowerCase().indexOf(q) >= 0;
+      }).slice(0, 8);
+      if (!items.length) { wdiagResults.classList.add('hidden'); return; }
+      wdiagResults.innerHTML = items.map(function (w, i) {
+        return '<div class="q-item" data-i="' + i + '"><div class="t"><span class="tag">西</span>' + esc(w.name) + '</div>' +
+          '<div class="sub">' + esc(w.brief || '') + '</div></div>';
+      }).join('');
+      wdiagResults.classList.remove('hidden');
+      Array.prototype.forEach.call(wdiagResults.querySelectorAll('.q-item'), function (el) {
+        el.onmousedown = function (e) {
+          e.preventDefault();
+          wdiagInput.value = items[Number(el.dataset.i)].name;
+          wdiagResults.classList.add('hidden');
+          wdiagInput.dispatchEvent(new Event('input'));
+        };
+      });
+    });
+    wdiagInput.addEventListener('blur', function () {
+      setTimeout(function () { wdiagResults.classList.add('hidden'); }, 150);
+    });
+
     // ===== 方药：药块网格 =====
     var herbGrid = document.getElementById('herbGrid');
+    var pairRow = document.getElementById('pairRow');
+    var tempRow = document.getElementById('tempRow');
+
     // 按"去前缀后的药名"去重（如 炙甘草 与 甘草 视为同一味）
     function herbBaseName(name) {
       var h = findHerb(name);
       return h ? h.name : name;
+    }
+    // 剂量统一为克数（纯数字）：4枚→12、3片→9、30ml→30、适量/空→库中默认量
+    function doseToGrams(doseStr, herbName) {
+      var d = (doseStr || '').trim();
+      var m = d.match(/^([\d.]+)(.*)$/);
+      if (!m) {
+        var h = findHerb(herbName);
+        var dm = (((h || {}).dosage) || '').match(/^([\d.]+)/);
+        return dm ? dm[1] : '';
+      }
+      var n = parseFloat(m[1]);
+      var unit = m[2] || '';
+      if (unit === '' || unit === 'g' || unit === '克' || unit === 'ml' || unit === 'mL') {
+        return String(Math.round(n * 10) / 10);
+      }
+      if (unit.indexOf('枚') >= 0 || unit.indexOf('片') >= 0) return String(Math.round(n * 3 * 10) / 10);
+      return String(Math.round(n * 10) / 10);
     }
     function addHerbs(list) {
       var skipped = [];
@@ -716,22 +846,96 @@
         var base = herbBaseName(hb.name);
         var dup = v.herbs.some(function (x) { return herbBaseName(x.name) === base; });
         if (dup) { skipped.push(hb.name); return; }
+        hb.dose = doseToGrams(hb.dose, hb.name);
         v.herbs.push(hb);
       });
       return skipped;
     }
+    // 药性寒热评分（-3大寒 … 0平 … +3大热）
+    function natureScore(name) {
+      var h = findHerb(name);
+      if (!h || !h.nature) return null;
+      var seg = h.nature.split('。')[0];
+      var map = [['大热', 3], ['大寒', -3], ['微温', 0.5], ['微寒', -0.5], ['热', 2], ['寒', -2], ['温', 1], ['凉', -0.5], ['平', 0]];
+      for (var i = 0; i < map.length; i++) {
+        if (seg.indexOf(map[i][0]) >= 0) return map[i][1];
+      }
+      return 0;
+    }
+    // 加权寒热偏性（按克数加权）
+    function calcTemp() {
+      var sum = 0, wsum = 0, unknown = 0;
+      v.herbs.forEach(function (hb) {
+        var s = natureScore(hb.name);
+        if (s === null) { unknown++; return; }
+        var g = parseFloat(hb.dose);
+        if (isNaN(g) || g <= 0) g = parseFloat((findHerb(hb.name) || {}).dosage) || 10;
+        sum += s * g;
+        wsum += g;
+      });
+      if (!wsum) return null;
+      return { score: sum / wsum, unknown: unknown };
+    }
+    function tempLabel(s) {
+      if (s <= -1.5) return '寒凉';
+      if (s < -0.3) return '偏凉';
+      if (s < 0.3) return '平和';
+      if (s < 1.5) return '偏温';
+      return '温热';
+    }
+    // 对药识别
+    function findPairs() {
+      var bases = v.herbs.map(function (hb) { return herbBaseName(hb.name); });
+      return PAIRS.filter(function (pr) {
+        return bases.indexOf(pr.a) >= 0 && bases.indexOf(pr.b) >= 0;
+      });
+    }
+
+    function renderPairsAndTemp() {
+      var pairs = findPairs();
+      if (pairRow) {
+        pairRow.innerHTML = pairs.length
+          ? '<div class="term-strip"><span class="hint">对药（悬停/点击看方解）：</span>' +
+            pairs.map(function (pr, i) {
+              return '<span class="pair-chip" data-i="' + i + '">' + esc(pr.a) + '·' + esc(pr.b) + '</span>';
+            }).join('') + '</div>'
+          : '';
+        Array.prototype.forEach.call(pairRow.querySelectorAll('.pair-chip'), function (el) {
+          el.addEventListener('mouseenter', function () {
+            showPopRaw(el, popContent('pair', pairs[Number(el.dataset.i)]));
+          });
+          el.addEventListener('mouseleave', scheduleHidePop);
+          el.addEventListener('click', function (e) {
+            e.stopPropagation();
+            showPopRaw(el, popContent('pair', pairs[Number(el.dataset.i)]));
+          });
+        });
+      }
+      if (tempRow) {
+        var t = calcTemp();
+        if (!t) { tempRow.innerHTML = ''; return; }
+        var pct = Math.max(2, Math.min(98, (t.score + 3) / 6 * 100));
+        tempRow.innerHTML =
+          '<div class="temp-wrap"><div class="temp-title">方剂寒热偏性：<b>' + tempLabel(t.score) + '</b>' +
+          '<span class="hint">（按克数加权' + (t.unknown ? '，' + t.unknown + ' 味未知药性未计入' : '') + '）</span></div>' +
+          '<div class="temp-bar"><div class="temp-marker" style="left:' + pct + '%"></div></div>' +
+          '<div class="temp-labels"><span>寒</span><span>平</span><span>热</span></div></div>';
+      }
+    }
+
     function renderHerbs() {
       if (!v.herbs.length) {
         herbGrid.innerHTML = '<p class="hint mt8">尚未添加药物。在上方输入药名或方名即可生成药块。</p>';
+        renderPairsAndTemp();
         return;
       }
       var h = '<div class="herb-grid">';
       v.herbs.forEach(function (hb, i) {
         h += '<div class="herb-chip">' +
           '<span class="hc-del" data-i="' + i + '" title="删除">×</span>' +
-          (hb.usage ? '<span class="hc-usage" data-i="' + i + '" title="点击切换用法">' + esc(hb.usage) + '</span>' : '') +
+          '<span class="hc-usage' + (hb.usage ? '' : ' empty') + '" data-i="' + i + '" title="点击选择煎服法">' + esc(hb.usage || '用法') + '</span>' +
           '<div class="hc-name" data-i="' + i + '" title="悬停/点击查看药性">' + esc(hb.name) + '</div>' +
-          '<input class="hc-dose" data-i="' + i + '" value="' + esc(hb.dose) + '" placeholder="剂量">' +
+          '<div class="hc-dose-row"><input class="hc-dose" data-i="' + i + '" value="' + esc(hb.dose) + '" placeholder="量" inputmode="decimal"><span class="hc-unit">g</span></div>' +
           '</div>';
       });
       h += '</div>';
@@ -739,8 +943,11 @@
 
       Array.prototype.forEach.call(herbGrid.querySelectorAll('.hc-dose'), function (el) {
         el.addEventListener('input', function () {
-          v.herbs[Number(el.dataset.i)].dose = el.value;
+          var cleaned = el.value.replace(/[^\d.]/g, '');
+          if (cleaned !== el.value) el.value = cleaned;
+          v.herbs[Number(el.dataset.i)].dose = cleaned;
           markDirty();
+          renderPairsAndTemp();
         });
       });
       Array.prototype.forEach.call(herbGrid.querySelectorAll('.hc-del'), function (el) {
@@ -751,12 +958,10 @@
         };
       });
       Array.prototype.forEach.call(herbGrid.querySelectorAll('.hc-usage'), function (el) {
-        el.onclick = function () {
-          var hb = v.herbs[Number(el.dataset.i)];
-          var cur = USAGE_OPTIONS.indexOf(hb.usage || '');
-          hb.usage = USAGE_OPTIONS[(cur + 1) % USAGE_OPTIONS.length];
-          markDirty();
-          renderHerbs();
+        el.onclick = function (e) {
+          e.stopPropagation();
+          var idx = Number(el.dataset.i);
+          showUsageMenu(el, idx);
         };
       });
       Array.prototype.forEach.call(herbGrid.querySelectorAll('.hc-name'), function (el) {
@@ -769,8 +974,71 @@
           showHerbPop(el, v.herbs[Number(el.dataset.i)].name);
         });
       });
+      renderPairsAndTemp();
+    }
+    // 煎服法选择菜单
+    var USAGE_MENU = ['先煎', '后下', '包煎', '烊化', '冲服', '另煎', '捣碎', '泡服', '无'];
+    function showUsageMenu(anchorEl, idx) {
+      var hb = v.herbs[idx];
+      var h = '<div class="kp-title">' + esc(hb.name) + '<span class="kp-meta">　选择煎服法</span></div>' +
+        '<div class="usage-menu">' + USAGE_MENU.map(function (u) {
+          var label = u === '无' ? '（无）' : u;
+          var on = (hb.usage || '无') === u || (u === '无' && !hb.usage);
+          return '<span class="usage-opt' + (on ? ' on' : '') + '" data-u="' + u + '">' + label + '</span>';
+        }).join('') + '</div>';
+      showPopRaw(anchorEl, h);
+      Array.prototype.forEach.call(popEl.querySelectorAll('.usage-opt'), function (opt) {
+        opt.onclick = function (e) {
+          e.stopPropagation();
+          v.herbs[idx].usage = opt.dataset.u === '无' ? '' : opt.dataset.u;
+          markDirty();
+          hidePop();
+          renderHerbs();
+        };
+      });
     }
     renderHerbs();
+
+    // 合方命名：小柴胡汤 → 再加二陈汤 → 小柴胡汤合二陈汤加减
+    function appendFormulaName(name) {
+      var note = (v.prescriptionNote || '').trim();
+      if (!note) return name + '加减';
+      if (note.indexOf(name) >= 0) return note;
+      if (/加减$/.test(note)) return note.slice(0, -2) + '合' + name + '加减';
+      return note + '合' + name;
+    }
+    // 方名/加减说明中识别到的方剂，高亮可悬停看方解
+    var noteChips = document.getElementById('noteFormulaChips');
+    function refreshNoteFormulas() {
+      if (!noteChips) return;
+      var hits = [];
+      FORMULAS.concat(customKB.formulas).forEach(function (f) {
+        if (f.name && v.prescriptionNote && v.prescriptionNote.indexOf(f.name) >= 0 && hits.indexOf(f.name) < 0) {
+          hits.push(f.name);
+        }
+      });
+      noteChips.innerHTML = hits.length
+        ? '<div class="term-strip"><span class="hint">方剂（悬停/点击看方解）：</span>' +
+          hits.map(function (t) { return '<span class="term-chip" data-term="' + esc(t) + '">' + esc(t) + '</span>'; }).join('') + '</div>'
+        : '';
+      Array.prototype.forEach.call(noteChips.querySelectorAll('.term-chip'), function (el) {
+        el.addEventListener('mouseenter', function () { showPop(el, el.dataset.term); });
+        el.addEventListener('mouseleave', scheduleHidePop);
+        el.addEventListener('click', function (e) {
+          e.stopPropagation();
+          showPop(el, el.dataset.term);
+        });
+      });
+    }
+    refreshNoteFormulas();
+
+    // 旧数据剂量统一为克数（一次性迁移）
+    var doseMigrated = false;
+    v.herbs.forEach(function (hb) {
+      var g = doseToGrams(hb.dose, hb.name);
+      if (g !== (hb.dose || '')) { hb.dose = g; doseMigrated = true; }
+    });
+    if (doseMigrated) { persist(); renderHerbs(); }
 
     var skipHintTimer = null;
     function showSkipHint(skipped) {
@@ -815,10 +1083,9 @@
           var skipped;
           if (it.kind === 'F') {
             skipped = addHerbs(parseComposition(it.data.composition));
-            if (!v.prescriptionNote) {
-              v.prescriptionNote = it.data.name + '加减';
-              app.querySelector('[data-field="prescriptionNote"]').value = v.prescriptionNote;
-            }
+            v.prescriptionNote = appendFormulaName(it.data.name);
+            app.querySelector('[data-field="prescriptionNote"]').value = v.prescriptionNote;
+            refreshNoteFormulas();
           } else {
             skipped = addHerbs([{ name: it.data.name, dose: it.data.dosage || '', usage: herbUsage(it.data.name) }]);
           }
@@ -1057,6 +1324,36 @@
     URL.revokeObjectURL(a.href);
   }
 
+  // 同人识别：姓名相同 + 性别不冲突 + 年龄差 ≤2 岁（兼容年龄随时间变化和录入误差）
+  function samePerson(a, b) {
+    if (!a.name || a.name.trim() !== (b.name || '').trim()) return false;
+    if (a.gender && b.gender && a.gender !== b.gender) return false;
+    var ageA = parseFloat(a.age), ageB = parseFloat(b.age);
+    if (!isNaN(ageA) && !isNaN(ageB) && Math.abs(ageA - ageB) > 2) return false;
+    return true;
+  }
+  // 就诊记录判重：id 相同，或就诊日期相同且病情记录/诊断内容一致
+  function sameVisit(x, y) {
+    if (x.id && y.id && x.id === y.id) return true;
+    if (!x.visitDate || x.visitDate !== y.visitDate) return false;
+    var cx = (x.condition || '') + (x.tcmDiagnosis || '') + (x.prescriptionNote || '');
+    var cy = (y.condition || '') + (y.tcmDiagnosis || '') + (y.prescriptionNote || '');
+    return cx === cy;
+  }
+  // 把就诊记录并入目标患者，返回新增条数
+  function mergeVisits(target, incoming) {
+    var added = 0;
+    (incoming || []).forEach(function (nv) {
+      var exists = target.visits.some(function (ov) { return sameVisit(ov, nv); });
+      if (!exists) {
+        if (!nv.id) nv.id = uid();
+        target.visits.push(nv);
+        added++;
+      }
+    });
+    return added;
+  }
+
   function importData(e) {
     var file = e.target.files[0];
     if (!file) return;
@@ -1065,13 +1362,25 @@
       try {
         var data = JSON.parse(reader.result);
         if (!data || !Array.isArray(data.patients)) throw new Error('bad');
-        var addP = 0, skipP = 0;
+        var newP = 0, mergedP = 0, addedV = 0, skippedV = 0;
         data.patients.forEach(function (p) {
-          if (!p.id || !p.name) { skipP++; return; }
-          if (findPatient(p.id)) { skipP++; return; }
+          if (!p.id || !p.name) { return; }
+          var totalV = (Array.isArray(p.visits) ? p.visits : []).length;
           p.visits = (Array.isArray(p.visits) ? p.visits : []).map(migrateVisit);
-          patients.push(p);
-          addP++;
+          // 先按 id 精确匹配，再按 姓名+性别+年龄(±2岁) 匹配
+          var target = findPatient(p.id);
+          if (!target) {
+            target = patients.find(function (x) { return samePerson(x, p); }) || null;
+          }
+          if (target) {
+            var added = mergeVisits(target, p.visits);
+            if (added > 0) { mergedP++; addedV += added; }
+            skippedV += totalV - added;
+          } else {
+            patients.push(p);
+            newP++;
+            addedV += totalV;
+          }
         });
         var addKB = 0;
         if (data.customKB) {
@@ -1085,9 +1394,9 @@
         }
         persist();
         persistKB();
-        alert('导入完成：新增患者 ' + addP + ' 人' +
-          (skipP ? '，跳过已存在/无效 ' + skipP + ' 人' : '') +
-          (addKB ? '，新增自定义知识 ' + addKB + ' 条' : ''));
+        alert('导入完成：\n· 新建患者 ' + newP + ' 人\n· 合并到已有患者 ' + mergedP + ' 人（新增就诊 ' + addedV + ' 条）' +
+          (skippedV ? '\n· 跳过已存在的就诊记录 ' + skippedV + ' 条' : '') +
+          (addKB ? '\n· 新增自定义知识 ' + addKB + ' 条' : ''));
         route();
       } catch (err) {
         alert('导入失败：文件格式不正确');
