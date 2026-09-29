@@ -283,9 +283,9 @@ button.small { padding: 7px 14px; font-size: 13px; }
 .hc-usage:active { opacity: 1; }
 
 /* 药性分区 */
-.temp-zones { display: flex; gap: 4px; overflow-x: auto; }
+.temp-zones { display: flex; gap: 6px; flex-wrap: wrap; }
 .tz {
-  flex: 1; min-width: 62px; border-radius: 8px; padding: 6px 4px; text-align: center;
+  flex: 0 0 auto; min-width: 66px; border-radius: 8px; padding: 6px 8px; text-align: center;
   background: #f4efe8; border: 1px solid var(--border);
 }
 .tz-0 { background: #dce8f5; } .tz-1 { background: #e5eef7; } .tz-2 { background: #eef4f3; }

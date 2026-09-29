@@ -489,22 +489,62 @@
           '<div class="empty">暂无病例<br>在上方输入患者姓名即可开始第一次记录</div>';
         return;
       }
-      var h = '';
+      // 分组（文件夹）：有分组的排前面，未分组的在最后
+      var groups = {}, order = [];
       list.forEach(function (p) {
-        var visits = sortedVisits(p);
-        var last = visits[0];
-        var sub = [];
-        if (last && last.tcmDiagnosis) sub.push(last.tcmDiagnosis);
-        if (last && last.syndrome) sub.push(last.syndrome);
-        h += '<div class="list-item" data-pid="' + p.id + '">' +
-          '<div class="row1"><span class="name">' + esc(p.name) +
-          (p.gender ? ' <span class="hint">' + esc(p.gender) + (p.age ? ' · ' + esc(p.age) + '岁' : '') + '</span>' : '') +
-          '</span><span class="date">' + p.visits.length + ' 次就诊</span></div>' +
-          '<div class="sub">' + esc(sub.join(' · ') || '—') + '</div></div>';
+        var f = (p.folder || '').trim();
+        if (!groups[f]) { groups[f] = []; order.push(f); }
+        groups[f].push(p);
+      });
+      order.sort(function (a, b) {
+        if (a === '') return 1;
+        if (b === '') return -1;
+        return a < b ? -1 : 1;
+      });
+      var h = '';
+      order.forEach(function (f) {
+        if (f) {
+          h += '<div class="folder-head">📁 ' + esc(f) +
+            '<span class="folder-del" data-folder="' + esc(f) + '" title="解散分组（患者回到未分组）">×</span></div>';
+        }
+        groups[f].forEach(function (p) {
+          var visits = sortedVisits(p);
+          var last = visits[0];
+          var sub = [];
+          if (last && last.tcmDiagnosis) sub.push(last.tcmDiagnosis);
+          if (last && last.syndrome) sub.push(last.syndrome);
+          h += '<div class="list-item" data-pid="' + p.id + '">' +
+            '<div class="row1"><span class="name">' + esc(p.name) +
+            (p.gender ? ' <span class="hint">' + esc(p.gender) + (p.age ? ' · ' + esc(p.age) + '岁' : '') + '</span>' : '') +
+            '</span><span class="date">' + p.visits.length + ' 次就诊' +
+            '<span class="row-del" data-pid="' + p.id + '" title="删除该患者">×</span></span></div>' +
+            '<div class="sub">' + esc(sub.join(' · ') || '—') + '</div></div>';
+        });
       });
       document.getElementById('patientList').innerHTML = h;
       Array.prototype.forEach.call(document.querySelectorAll('#patientList .list-item'), function (el) {
         el.onclick = function () { location.hash = '#/patient/' + el.dataset.pid; };
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('#patientList .row-del'), function (el) {
+        el.onclick = function (e) {
+          e.stopPropagation();
+          var p = findPatient(el.dataset.pid);
+          if (!p) return;
+          if (!confirm('删除患者「' + p.name + '」及其全部 ' + p.visits.length + ' 条就诊记录？删除后无法恢复！')) return;
+          patients = patients.filter(function (x) { return x.id !== p.id; });
+          persist();
+          renderList();
+        };
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('#patientList .folder-del'), function (el) {
+        el.onclick = function (e) {
+          e.stopPropagation();
+          var f = el.dataset.folder;
+          if (!confirm('解散分组「' + f + '」？组内患者会回到「未分组」，病例不删除。')) return;
+          patients.forEach(function (p) { if ((p.folder || '').trim() === f) p.folder = ''; });
+          persist();
+          renderList();
+        };
       });
     }
     patientSearch.addEventListener('input', renderList);
@@ -523,6 +563,7 @@
     p.visits.push(v);
     persist();
     location.hash = '#/visit/' + p.id + '/' + v.id;
+    route(); // 兜底：防止个别浏览器 hashchange 不及时
   }
 
   // ---------- 视图：患者详情 ----------
@@ -531,6 +572,13 @@
     if (!p) { location.hash = '#/'; return; }
     setHeader(p.name, true, '#/');
     setStatus('');
+
+    // 现有分组列表（供 datalist 联想）
+    var folderSet = [];
+    patients.forEach(function (x) {
+      var f = (x.folder || '').trim();
+      if (f && folderSet.indexOf(f) < 0) folderSet.push(f);
+    });
 
     var visits = sortedVisits(p);
     app.innerHTML =
@@ -544,7 +592,12 @@
       '<option' + (p.gender === '女' ? ' selected' : '') + '>女</option></select></div>' +
       '<div class="field"><label>年龄</label><input data-pfield="age" value="' + esc(p.age) + '"></div>' +
       '</div>' +
-      '<div class="field"><label>备注（区分同名患者，如单位/特征）</label><input data-pfield="note" value="' + esc(p.note) + '"></div>' +
+      '<div class="field-row">' +
+      '<div class="field"><label>分组（文件夹，可填新名字建组）</label>' +
+      '<input data-pfield="folder" list="folderList" value="' + esc(p.folder || '') + '" placeholder="如：脾胃病组">' +
+      '<datalist id="folderList">' + folderSet.map(function (f) { return '<option value="' + esc(f) + '">'; }).join('') + '</datalist></div>' +
+      '<div class="field"><label>备注（区分同名患者）</label><input data-pfield="note" value="' + esc(p.note) + '"></div>' +
+      '</div>' +
       '</div>' +
       '<div class="toolbar"><button id="newVisitBtn">＋ 新建就诊记录</button></div>' +
       '<div id="visitList"></div>' +
@@ -558,12 +611,24 @@
       var sub = [v.tcmDiagnosis, v.syndrome].filter(Boolean).join(' · ') ||
         (v.condition ? v.condition.slice(0, 30) : '—');
       vh += '<div class="list-item" data-vid="' + v.id + '">' +
-        '<div class="row1"><span class="name">' + esc(v.visitDate || '未填日期') + '</span></div>' +
+        '<div class="row1"><span class="name">' + esc(v.visitDate || '未填日期') + '</span>' +
+        '<span class="row-del" data-vid="' + v.id + '" title="删除这条就诊">×</span></div>' +
         '<div class="sub">' + esc(sub) + '</div></div>';
     });
     document.getElementById('visitList').innerHTML = vh;
     Array.prototype.forEach.call(document.querySelectorAll('#visitList .list-item'), function (el) {
       el.onclick = function () { location.hash = '#/visit/' + p.id + '/' + el.dataset.vid; };
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('#visitList .row-del'), function (el) {
+      el.onclick = function (e) {
+        e.stopPropagation();
+        var vv = findVisit(p, el.dataset.vid);
+        if (!vv) return;
+        if (!confirm('删除 ' + (vv.visitDate || '') + ' 这条就诊记录？删除后无法恢复！')) return;
+        p.visits = p.visits.filter(function (x) { return x.id !== vv.id; });
+        persist();
+        renderPatient(pid);
+      };
     });
 
     Array.prototype.forEach.call(app.querySelectorAll('[data-pfield]'), function (el) {
@@ -671,25 +736,18 @@
 
       '<div class="card"><h2>诊断与治法</h2>' +
       '<div class="field-row">' +
-      '<div class="field quick-wrap"><label>中医诊断</label>' +
+      '<div class="field quick-wrap"><label>中医诊断 / 辨证（病名与证型都可加，可多个）</label>' +
       '<div class="multi" id="tcmMulti"></div>' +
-      '<input id="diagInput" placeholder="拼音首字母或病名，如 gxy" autocomplete="off">' +
+      '<input id="diagInput" placeholder="如：胃脘痛 / wt / 肝郁脾虚证" autocomplete="off">' +
       '<div id="diagResults" class="quick-results hidden"></div></div>' +
       '<div class="field quick-wrap"><label>西医诊断</label>' +
       '<div class="multi" id="wdMulti"></div>' +
       '<input id="wdiagInput" placeholder="如：慢性胃炎 / mxwy" autocomplete="off">' +
       '<div id="wdiagResults" class="quick-results hidden"></div></div>' +
       '</div>' +
-      '<div class="field-row">' +
-      '<div class="field quick-wrap"><label>辨证（证型）</label>' +
-      '<div class="multi" id="synMulti"></div>' +
-      '<input id="synInput" placeholder="如：肝郁脾虚证 / gypxz" autocomplete="off">' +
-      '<div id="synResults" class="quick-results hidden"></div></div>' +
       '<div class="field quick-wrap"><label>治法</label>' +
-      '<div class="multi" id="treatMulti"></div>' +
       '<input id="treatInput" placeholder="如：平肝潜阳 / pgqy" autocomplete="off">' +
       '<div id="treatInputResults" class="quick-results hidden"></div></div>' +
-      '</div>' +
       '<div id="treatSugg"></div>' +
       '</div>' +
 
@@ -795,7 +853,13 @@
     function refreshTreatment() {
       var sug = [];
       var idx = buildTermIndex();
-      // 每个已填证型都可能带出治法
+      // 已填的证型（合并在中医诊断字段里）带出对应治法
+      (v.tcmDiagnosis || '').split('、').forEach(function (name) {
+        name = name.trim();
+        if (name && idx[name] && idx[name].type === 'syndrome' && idx[name].data.treatment) {
+          if (sug.indexOf(idx[name].data.treatment) < 0) sug.push(idx[name].data.treatment);
+        }
+      });
       (v.syndrome || '').split('、').forEach(function (syn) {
         syn = syn.trim();
         if (syn && idx[syn] && idx[syn].type === 'syndrome' && idx[syn].data.treatment) {
@@ -919,23 +983,56 @@
       });
     }
 
-    // 中医诊断
+    // 旧数据迁移：独立"辨证"字段并入"中医诊断/辨证"
+    if (v.syndrome) {
+      var synParts = v.syndrome.split('、').map(function (s) { return s.trim(); }).filter(Boolean);
+      var tcmParts = (v.tcmDiagnosis || '').split('、').map(function (s) { return s.trim(); }).filter(Boolean);
+      synParts.forEach(function (s) { if (tcmParts.indexOf(s) < 0) tcmParts.push(s); });
+      v.tcmDiagnosis = tcmParts.join('、');
+      v.syndrome = '';
+      persist();
+    }
+
+    // 中医诊断/辨证：病名与证型同一联想框；西医病名会标注中医归属（严谨区分）
     function allDiseases() { return vis(DISEASES, 'diseases').concat(customKB.diseases); }
+    var ALL_SYNDROMES = [];
+    allDiseases().forEach(function (d) {
+      (d.syndromes || []).forEach(function (s) {
+        ALL_SYNDROMES.push({ name: s.name, py: toPy(s.name) || '', treatment: s.treatment || '', disease: d.name });
+      });
+    });
+    function isWesternName(name) {
+      return WESTERN.some(function (w) { return w.name === name; });
+    }
     bindSuggest(
       document.getElementById('diagInput'),
       document.getElementById('diagResults'),
       function (q) {
-        return allDiseases().filter(function (d) {
-          return (d.py && d.py.indexOf(q) === 0) || d.name.toLowerCase().indexOf(q) >= 0 ||
-            (d.alias && d.alias.indexOf(q) >= 0);
+        var items = [];
+        allDiseases().forEach(function (d) {
+          if ((d.py && d.py.indexOf(q) === 0) || d.name.toLowerCase().indexOf(q) >= 0 ||
+            (d.alias && d.alias.indexOf(q) >= 0)) items.push({ kind: 'D', data: d });
         });
+        ALL_SYNDROMES.forEach(function (s) {
+          if ((s.py && s.py.indexOf(q) === 0) || s.name.indexOf(q) >= 0) items.push({ kind: 'S', data: s });
+        });
+        return items;
       },
-      function (d, i) {
-        return '<div class="q-item" data-i="' + i + '"><div class="t"><span class="tag">病</span>' + esc(d.name) + '</div>' +
-          '<div class="sub">' + esc((d.syndromes || []).map(function (s) { return s.name; }).join('、') || d.alias || '') + '</div></div>';
+      function (it, i) {
+        if (it.kind === 'S') {
+          return '<div class="q-item" data-i="' + i + '"><div class="t"><span class="tag">证</span>' + esc(it.data.name) + '</div>' +
+            '<div class="sub">' + esc(it.data.disease + (it.data.treatment ? ' · 治法：' + it.data.treatment : '')) + '</div></div>';
+        }
+        var d = it.data;
+        var sub = isWesternName(d.name) && d.alias
+          ? '西医病名 · 中医归属：' + d.alias
+          : ((d.syndromes || []).map(function (s) { return s.name; }).join('、') || d.alias || '');
+        return '<div class="q-item" data-i="' + i + '"><div class="t"><span class="tag">' + (isWesternName(d.name) ? '西→中' : '病') + '</span>' + esc(d.name) + '</div>' +
+          '<div class="sub">' + esc(sub) + '</div></div>';
       },
-      function (d) {
-        addMulti('tcmMulti', 'tcmDiagnosis', 'disease', d ? d.name : document.getElementById('diagInput').value);
+      function (it) {
+        var name = it ? (it.kind === 'S' ? it.data.name : it.data.name) : document.getElementById('diagInput').value;
+        addMulti('tcmMulti', 'tcmDiagnosis', 'disease', name);
       }
     );
 
@@ -954,30 +1051,6 @@
       },
       function (w) {
         addMulti('wdMulti', 'westernDiagnosis', 'western', w ? w.name : document.getElementById('wdiagInput').value);
-      }
-    );
-
-    // 辨证（证型）：全部证型建立索引，含拼音首字母
-    var ALL_SYNDROMES = [];
-    allDiseases().forEach(function (d) {
-      (d.syndromes || []).forEach(function (s) {
-        ALL_SYNDROMES.push({ name: s.name, py: toPy(s.name) || '', treatment: s.treatment || '', disease: d.name });
-      });
-    });
-    bindSuggest(
-      document.getElementById('synInput'),
-      document.getElementById('synResults'),
-      function (q) {
-        return ALL_SYNDROMES.filter(function (s) {
-          return (s.py && s.py.indexOf(q) === 0) || s.name.indexOf(q) >= 0;
-        });
-      },
-      function (s, i) {
-        return '<div class="q-item" data-i="' + i + '"><div class="t"><span class="tag">证</span>' + esc(s.name) + '</div>' +
-          '<div class="sub">' + esc(s.disease + (s.treatment ? ' · 治法：' + s.treatment : '')) + '</div></div>';
-      },
-      function (s) {
-        addMulti('synMulti', 'syndrome', 'syndrome', s ? s.name : document.getElementById('synInput').value);
       }
     );
 
@@ -1025,36 +1098,32 @@
 
     renderMulti('tcmMulti', 'tcmDiagnosis', 'disease');
     renderMulti('wdMulti', 'westernDiagnosis', 'western');
-    renderMulti('synMulti', 'syndrome', 'syndrome');
 
-    // ===== 病情记录模板保护 + 自动撑高 =====
+    // ===== 病情记录模板保护（回滚式：动到固定行标题就恢复上一步） =====
     var condTa = document.getElementById('conditionTa');
+    var lastGood = condTa.value;
+    function templateValid(text) {
+      var pos = 0;
+      for (var i = 0; i < COND_LABELS.length; i++) {
+        var idx = text.indexOf((pos === 0 ? '' : '\n') + COND_LABELS[i], pos);
+        // 首个标签必须出现在开头，其余必须各占新行且顺序不变
+        if (i === 0 && text.indexOf(COND_LABELS[0]) !== 0) return false;
+        if (idx < 0) return false;
+        pos = idx + COND_LABELS[i].length;
+      }
+      return true;
+    }
     function growTa() {
       condTa.style.height = 'auto';
       condTa.style.height = Math.max(condTa.scrollHeight, 200) + 'px';
     }
-    function guardTemplate() {
-      var lines = condTa.value.split('\n');
-      var insertAt = 0;
-      COND_LABELS.forEach(function (label) {
-        var found = false;
-        for (var i = insertAt; i < lines.length; i++) {
-          if (lines[i].indexOf(label) === 0) { found = true; insertAt = i + 1; break; }
-        }
-        if (!found) {
-          lines.splice(insertAt, 0, label);
-          insertAt++;
-        }
-      });
-      var fixed = lines.join('\n');
-      if (fixed !== condTa.value) {
-        var pos = condTa.selectionStart;
-        condTa.value = fixed;
-        condTa.selectionStart = condTa.selectionEnd = Math.min(pos, fixed.length);
-      }
-    }
     condTa.addEventListener('input', function () {
-      guardTemplate();
+      if (templateValid(condTa.value)) {
+        lastGood = condTa.value;
+      } else {
+        condTa.value = lastGood;
+        condTa.selectionStart = condTa.selectionEnd = lastGood.length;
+      }
       growTa();
       v.condition = condTa.value;
       markDirty();
@@ -1142,7 +1211,7 @@
       }
       if (tempRow) {
         if (!v.herbs.length) { tempRow.innerHTML = ''; return; }
-        // 分区归药
+        // 分区归药（只显示有药的区，自动换行，无需横滑）
         var zones = {};
         TEMP_ZONES.forEach(function (z) { zones[z] = []; });
         var unknown = [];
@@ -1151,9 +1220,10 @@
           if (z === null) unknown.push(hb.name);
           else zones[z].push(hb.name + (hb.dose ? hb.dose + 'g' : ''));
         });
-        var h = '<div class="temp-wrap"><div class="temp-title">药性分布（按寒温分区）：</div><div class="temp-zones">';
+        var h = '<div class="temp-wrap"><div class="temp-title">药性分布（寒 → 热）：</div><div class="temp-zones">';
         TEMP_ZONES.forEach(function (z, i) {
-          h += '<div class="tz tz-' + i + (zones[z].length ? '' : ' tz-empty') + '">' +
+          if (!zones[z].length) return;
+          h += '<div class="tz tz-' + i + '">' +
             '<div class="tz-label">' + z + '</div>' +
             '<div class="tz-herbs">' + zones[z].map(function (n) { return '<span>' + esc(n) + '</span>'; }).join('') + '</div></div>';
         });
@@ -1709,14 +1779,18 @@
     hidePop();
     var h = location.hash || '#/';
     var m;
-    if ((m = h.match(/^#\/visit\/([^/]+)\/([^/]+)/))) {
-      renderVisitEditor(m[1], m[2]);
-    } else if ((m = h.match(/^#\/patient\/([^/]+)/))) {
-      renderPatient(m[1]);
-    } else if (h.indexOf('#/kb') === 0) {
-      renderKB();
-    } else {
-      renderPatientList();
+    try {
+      if ((m = h.match(/^#\/visit\/([^/]+)\/([^/]+)/))) {
+        renderVisitEditor(m[1], m[2]);
+      } else if ((m = h.match(/^#\/patient\/([^/]+)/))) {
+        renderPatient(m[1]);
+      } else if (h.indexOf('#/kb') === 0) {
+        renderKB();
+      } else {
+        renderPatientList();
+      }
+    } catch (err) {
+      setStatus('页面出错了：' + err.message + '（请截图告诉我）');
     }
     window.scrollTo(0, 0);
   }
