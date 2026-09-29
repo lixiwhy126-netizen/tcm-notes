@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>中医跟诊病例记录</title>
+<meta name="description" content="中医跟诊病例记录：患者管理、四诊记录、方剂联想录入、证型舌脉知识库速查">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <button id="backBtn" class="back-btn hidden">‹</button>
+  <h1 id="headerTitle">跟诊病例</h1>
+  <span class="save-status" id="saveStatus"></span>
+  <button id="navKB">知识库</button>
+  <button id="navHome">病例</button>
+</header>
+<div id="app"></div>
+
+<script src="kb/herbs.js"></script>
+<script src="kb/formulas.js"></script>
+<script src="kb/diseases.js"></script>
+<script src="kb/signs.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
