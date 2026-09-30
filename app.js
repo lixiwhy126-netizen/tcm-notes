@@ -415,6 +415,59 @@
     clearTimeout(popHideTimer);
     if (popEl) { popEl.remove(); popEl = null; }
   }
+  // ---------- 页面内弹窗（替代原生 prompt/confirm/alert，避免在部分浏览器中卡死页面） ----------
+  function uiModal(opts) {
+    var ov = document.createElement('div');
+    ov.className = 'ui-modal-overlay';
+    ov.innerHTML = '<div class="ui-modal">' +
+      (opts.title ? '<div class="ui-modal-title">' + opts.title + '</div>' : '') +
+      (opts.body ? '<div class="ui-modal-body">' + opts.body + '</div>' : '') +
+      (opts.input !== undefined ? '<input class="ui-modal-input" id="uiModalInput" value="' + esc(opts.input) + '" autocomplete="off">' : '') +
+      '<div class="ui-modal-btns">' +
+      (opts.hideCancel ? '' : '<button class="secondary" id="uiModalCancel">取消</button>') +
+      '<button id="uiModalOk"' + (opts.danger ? ' class="danger"' : '') + '>' + esc(opts.okText || '确定') + '</button></div></div>';
+    document.body.appendChild(ov);
+    var input = ov.querySelector('#uiModalInput');
+    if (input) input.focus();
+    function close() { ov.remove(); }
+    var cancelBtn = ov.querySelector('#uiModalCancel');
+    if (cancelBtn) cancelBtn.onclick = close;
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    ov.querySelector('#uiModalOk').onclick = function () {
+      var val = input ? input.value : true;
+      close();
+      if (opts.onOk) opts.onOk(val);
+    };
+    if (input) input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); ov.querySelector('#uiModalOk').click(); }
+    });
+  }
+  function uiConfirm(msg, onOk, okText) {
+    uiModal({ body: esc(msg), okText: okText || '确定删除', danger: true, onOk: onOk });
+  }
+  function uiPrompt(msg, def, onOk) {
+    uiModal({ body: esc(msg), input: def || '', okText: '确定', onOk: function (v) {
+      v = (v || '').trim();
+      if (v) onOk(v);
+    } });
+  }
+  function uiAlert(msg) {
+    uiModal({ body: esc(msg).replace(/\n/g, '<br>'), okText: '知道了', hideCancel: true });
+  }
+  var toastTimer = null;
+  function toast(msg) {
+    var t = document.getElementById('uiToast');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'uiToast';
+      document.body.appendChild(t);
+    }
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2200);
+  }
+
   document.addEventListener('click', function (e) {
     if (!popEl || popEl.contains(e.target)) return;
     var t = e.target;
@@ -481,12 +534,11 @@
     patientSearch.addEventListener('input', renderGroups);
 
     document.getElementById('newGroupBtn').onclick = function () {
-      var name = prompt('新分组名称（如：脾胃病组）：');
-      if (!name || !name.trim()) return;
-      name = name.trim();
-      if (groupRegistry.indexOf(name) < 0) { groupRegistry.push(name); persistGroups(); }
-      collapsedGroups[name] = false;
-      renderGroups();
+      uiPrompt('新分组名称（如：脾胃病组）：', '', function (name) {
+        if (groupRegistry.indexOf(name) < 0) { groupRegistry.push(name); persistGroups(); }
+        collapsedGroups[name] = false;
+        renderGroups();
+      });
     };
     document.getElementById('manageBtn').onclick = function () {
       manageMode = !manageMode;
@@ -536,10 +588,11 @@
         e.stopPropagation();
         var p = findPatient(el.dataset.pid);
         if (!p) return;
-        if (!confirm('删除患者「' + p.name + '」及其全部 ' + p.visits.length + ' 条就诊记录？删除后无法恢复！')) return;
-        patients = patients.filter(function (x) { return x.id !== p.id; });
-        persist();
-        renderGroups();
+        uiConfirm('删除患者「' + p.name + '」及其全部 ' + p.visits.length + ' 条就诊记录？删除后无法恢复！', function () {
+          patients = patients.filter(function (x) { return x.id !== p.id; });
+          persist();
+          renderGroups();
+        });
       };
     });
     Array.prototype.forEach.call(box.querySelectorAll('.row-check'), function (el) {
@@ -551,16 +604,40 @@
     });
   }
 
-  // 组内新建患者（含同人检测：已有患者可直接入组并开新就诊）
+  // 组内新建患者（姓名+性别+年龄一次建上，性别年龄可不填；含同人检测）
   function groupCreatorHTML(g) {
     if (creatingInGroup !== g) return '';
-    return '<div class="group-create"><input id="gcInput" placeholder="患者姓名" autocomplete="off"><div id="gcMatch"></div></div>';
+    return '<div class="group-create">' +
+      '<div class="gc-row">' +
+      '<input id="gcInput" placeholder="患者姓名（必填）" autocomplete="off">' +
+      '<select id="gcGender"><option value="">性别</option><option>男</option><option>女</option></select>' +
+      '<input id="gcAge" placeholder="年龄" inputmode="numeric">' +
+      '</div>' +
+      '<div id="gcMatch"></div>' +
+      '<div class="gc-btns">' +
+      '<button class="small" id="gcSaveGo">保存并开始记录</button>' +
+      '<button class="small secondary" id="gcSaveOnly">仅保存患者</button>' +
+      '<button class="small secondary" id="gcCancel">取消</button>' +
+      '</div></div>';
   }
   function bindGroupCreator(g) {
     var input = document.getElementById('gcInput');
     if (!input) return;
     var match = document.getElementById('gcMatch');
     input.focus();
+    function readForm() {
+      return {
+        name: input.value.trim(),
+        gender: document.getElementById('gcGender').value,
+        age: document.getElementById('gcAge').value.trim()
+      };
+    }
+    function createPatient(f) {
+      var p = { id: uid(), name: f.name, gender: f.gender, age: f.age, note: '', folders: g ? [g] : [], visits: [] };
+      patients.push(p);
+      persist();
+      return p;
+    }
     input.addEventListener('input', function () {
       var q = input.value.trim();
       if (!q) { match.innerHTML = ''; return; }
@@ -572,24 +649,36 @@
           '<div class="sub">已有 ' + p.visits.length + ' 次就诊' +
           (inGroup ? '（已在本组）' : '（加入本组）') + ' → 为其新建就诊</div></div>';
       });
-      h += '<div class="match-item new" data-new="1">＋ 新建患者「' + esc(q) + '」' + (g ? '（加入' + esc(g) + '）' : '') + '</div>';
-      match.innerHTML = '<div class="match-box">' + h + '</div>';
+      match.innerHTML = h ? '<div class="match-box">' + h + '</div>' : '';
       Array.prototype.forEach.call(match.querySelectorAll('.match-item'), function (el) {
         el.onclick = function () {
-          var p;
-          if (el.dataset.new) {
-            p = { id: uid(), name: q, gender: '', age: '', note: '', folders: g ? [g] : [], visits: [] };
-            patients.push(p);
-          } else {
-            p = findPatient(el.dataset.pid);
-            if (p && g) addToGroup(p, g);
-          }
+          var p = findPatient(el.dataset.pid);
+          if (!p) return;
+          if (g) addToGroup(p, g);
           persist();
           creatingInGroup = null;
           createVisitAndGo(p);
         };
       });
     });
+    document.getElementById('gcSaveGo').onclick = function () {
+      var f = readForm();
+      if (!f.name) { toast('请先填写患者姓名'); return; }
+      var p = createPatient(f);
+      creatingInGroup = null;
+      createVisitAndGo(p);
+    };
+    document.getElementById('gcSaveOnly').onclick = function () {
+      var f = readForm();
+      if (!f.name) { toast('请先填写患者姓名'); return; }
+      createPatient(f);
+      creatingInGroup = null;
+      renderGroups();
+    };
+    document.getElementById('gcCancel').onclick = function () {
+      creatingInGroup = null;
+      renderGroups();
+    };
   }
 
   function renderGroups() {
@@ -662,12 +751,13 @@
       el.onclick = function (e) {
         e.stopPropagation();
         var g = el.dataset.g;
-        if (!confirm('删除分组「' + g + '」？组内患者的病例不删除，会回到「未分组」。')) return;
-        groupRegistry = groupRegistry.filter(function (x) { return x !== g; });
-        patients.forEach(function (p) { removeFromGroup(p, g); });
-        persistGroups();
-        persist();
-        renderGroups();
+        uiConfirm('删除分组「' + g + '」？组内患者的病例不删除，会回到「未分组」。', function () {
+          groupRegistry = groupRegistry.filter(function (x) { return x !== g; });
+          patients.forEach(function (p) { removeFromGroup(p, g); });
+          persistGroups();
+          persist();
+          renderGroups();
+        });
       };
     });
     bindPatientRows(area);
@@ -697,7 +787,7 @@
     }
     document.getElementById('moveBtn').onclick = function () {
       var t = document.getElementById('moveTarget').value;
-      if (!t) { alert('先选一个目标分组'); return; }
+      if (!t) { toast('先选一个目标分组'); return; }
       checkedList().forEach(function (p) { p.folders = [t]; });
       persist();
       checkedPatients = {};
@@ -706,7 +796,7 @@
     };
     document.getElementById('alsoAddBtn').onclick = function () {
       var t = document.getElementById('moveTarget').value;
-      if (!t) { alert('先选一个目标分组'); return; }
+      if (!t) { toast('先选一个目标分组'); return; }
       checkedList().forEach(function (p) { addToGroup(p, t); });
       persist();
       checkedPatients = {};
@@ -739,11 +829,7 @@
     setStatus('');
 
     // 现有分组列表（供 datalist 联想）
-    var folderSet = [];
-    patients.forEach(function (x) {
-      var f = (x.folder || '').trim();
-      if (f && folderSet.indexOf(f) < 0) folderSet.push(f);
-    });
+    var folderSet = allGroups();
 
     var visits = sortedVisits(p);
     app.innerHTML =
@@ -788,10 +874,11 @@
         e.stopPropagation();
         var vv = findVisit(p, el.dataset.vid);
         if (!vv) return;
-        if (!confirm('删除 ' + (vv.visitDate || '') + ' 这条就诊记录？删除后无法恢复！')) return;
-        p.visits = p.visits.filter(function (x) { return x.id !== vv.id; });
-        persist();
-        renderPatient(pid);
+        uiConfirm('删除 ' + (vv.visitDate || '') + ' 这条就诊记录？删除后无法恢复！', function () {
+          p.visits = p.visits.filter(function (x) { return x.id !== vv.id; });
+          persist();
+          renderPatient(pid);
+        });
       };
     });
 
@@ -835,10 +922,11 @@
 
     document.getElementById('newVisitBtn').onclick = function () { createVisitAndGo(p); };
     document.getElementById('delPatientBtn').onclick = function () {
-      if (!confirm('确定删除患者「' + p.name + '」及其全部 ' + p.visits.length + ' 条就诊记录吗？删除后无法恢复！')) return;
-      patients = patients.filter(function (x) { return x.id !== p.id; });
-      persist();
-      location.hash = '#/';
+      uiConfirm('确定删除患者「' + p.name + '」及其全部 ' + p.visits.length + ' 条就诊记录吗？删除后无法恢复！', function () {
+        patients = patients.filter(function (x) { return x.id !== p.id; });
+        persist();
+        location.hash = '#/';
+      });
     };
   }
 
@@ -1000,10 +1088,11 @@
     });
 
     document.getElementById('delVisitBtn').onclick = function () {
-      if (!confirm('确定删除这次就诊记录吗？删除后无法恢复！')) return;
-      p.visits = p.visits.filter(function (x) { return x.id !== vid; });
-      persist();
-      location.hash = '#/patient/' + p.id;
+      uiConfirm('确定删除这次就诊记录吗？删除后无法恢复！', function () {
+        p.visits = p.visits.filter(function (x) { return x.id !== vid; });
+        persist();
+        location.hash = '#/patient/' + p.id;
+      });
     };
 
     // ===== 词条识别 + 悬浮弹窗 =====
@@ -1818,17 +1907,21 @@
         e.stopPropagation();
         var type = el.dataset.delType;
         var name = el.dataset.delName;
-        if (el.dataset.delI !== undefined && el.dataset.delI !== '') {
-          if (!confirm('删除这条自定义知识「' + name + '」？')) return;
-          customKB[type].splice(Number(el.dataset.delI), 1);
-        } else {
-          if (!confirm('「' + name + '」是内置条目，删除后将不再显示（如需找回可用「添加我的知识」重新录入）。确定删除？')) return;
-          if (customKB.suppress.indexOf(type + '|' + name) < 0) customKB.suppress.push(type + '|' + name);
-        }
-        persistKB();
-        TERM_INDEX = null;
-        TREAT_INDEX = null;
-        renderKBResults();
+        var isCustom = el.dataset.delI !== undefined && el.dataset.delI !== '';
+        var msg = isCustom
+          ? '删除这条自定义知识「' + name + '」？'
+          : '「' + name + '」是内置条目，删除后将不再显示（如需找回可用「添加我的知识」重新录入）。确定删除？';
+        uiConfirm(msg, function () {
+          if (isCustom) {
+            customKB[type].splice(Number(el.dataset.delI), 1);
+          } else {
+            if (customKB.suppress.indexOf(type + '|' + name) < 0) customKB.suppress.push(type + '|' + name);
+          }
+          persistKB();
+          TERM_INDEX = null;
+          TREAT_INDEX = null;
+          renderKBResults();
+        });
       };
     });
     // 编辑（内置条目编辑后存为个人版本覆盖；自定义条目直接改）
@@ -1911,7 +2004,7 @@
         obj[el.dataset.ck] = el.value.trim();
         if (el.dataset.ck === 'name' || el.dataset.ck === 'term') hasName = !!el.value.trim();
       });
-      if (!hasName) { alert('请至少填写名称'); return; }
+      if (!hasName) { toast('请至少填写名称'); return; }
       if (type === 'diseases' && !obj.syndromes) obj.syndromes = [];
 
       if (editing && target.customIdx !== undefined && target.customIdx !== null) {
@@ -1936,7 +2029,7 @@
       wrap.innerHTML = '';
       kbState.tab = editing ? kbState.tab : '我的添加';
       renderKB();
-      alert('已保存');
+      toast('已保存');
     };
   }
 
@@ -2040,12 +2133,12 @@
         persistGroups();
         persist();
         persistKB();
-        alert('导入完成：\n· 新建患者 ' + newP + ' 人\n· 合并到已有患者 ' + mergedP + ' 人（新增就诊 ' + addedV + ' 条）' +
+        uiAlert('导入完成：\n· 新建患者 ' + newP + ' 人\n· 合并到已有患者 ' + mergedP + ' 人（新增就诊 ' + addedV + ' 条）' +
           (skippedV ? '\n· 跳过已存在的就诊记录 ' + skippedV + ' 条' : '') +
           (addKB ? '\n· 新增自定义知识 ' + addKB + ' 条' : ''));
         route();
       } catch (err) {
-        alert('导入失败：文件格式不正确');
+        uiAlert('导入失败：文件格式不正确');
       }
       e.target.value = '';
     };
@@ -2068,6 +2161,7 @@
         renderPatientList();
       }
     } catch (err) {
+      if (window.console && console.error) console.error(err);
       setStatus('页面出错了：' + err.message + '（请截图告诉我）');
     }
     window.scrollTo(0, 0);

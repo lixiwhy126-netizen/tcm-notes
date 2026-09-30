@@ -336,6 +336,45 @@ button.small { padding: 7px 14px; font-size: 13px; }
   border-radius: 10px; font-size: 15px; outline: none; background: var(--card);
 }
 .row-check { width: 20px; height: 20px; margin-right: 8px; flex-shrink: 0; align-self: center; }
+
+/* 页面内弹窗（替代原生 prompt/confirm/alert） */
+.ui-modal-overlay {
+  position: fixed; inset: 0; z-index: 300; background: rgba(40,25,18,.45);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.ui-modal {
+  background: #fff; border-radius: 14px; padding: 18px;
+  width: 100%; max-width: 360px; box-shadow: 0 16px 48px rgba(0,0,0,.3);
+}
+.ui-modal-title { font-size: 15px; font-weight: 700; color: var(--primary); margin-bottom: 8px; }
+.ui-modal-body { font-size: 14px; line-height: 1.7; color: var(--text); margin-bottom: 14px; }
+.ui-modal-input {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 15px; font-family: inherit; outline: none;
+  background: #fdfcfa; margin-bottom: 14px;
+}
+.ui-modal-btns { display: flex; gap: 10px; justify-content: flex-end; }
+.ui-modal-btns button { padding: 9px 20px; font-size: 14px; }
+
+/* 轻提示 */
+#uiToast {
+  position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%) translateY(20px);
+  background: rgba(45,42,38,.92); color: #fff; font-size: 14px;
+  padding: 10px 20px; border-radius: 999px; z-index: 400;
+  opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+  max-width: 86vw; text-align: center;
+}
+#uiToast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* 组内新建患者表单 */
+.gc-row { display: flex; gap: 8px; }
+.gc-row input { flex: 1; min-width: 0; }
+.gc-row select {
+  width: 74px; flex-shrink: 0; padding: 10px 6px; border: 1px solid var(--border);
+  border-radius: 10px; font-size: 14px; font-family: inherit; background: var(--card);
+}
+.gc-row input[inputmode="numeric"] { width: 74px; flex: 0 0 74px; }
+.gc-btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .manage-bar {
   position: sticky; bottom: 0; background: var(--card); border: 1px solid var(--border);
   border-radius: 12px; padding: 10px 14px; margin-top: 10px;
