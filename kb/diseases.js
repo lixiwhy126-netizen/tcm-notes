@@ -1,6 +1,7 @@
 var KB_DISEASES = [
   {
     "name": "感冒",
+    "cat": "肺系病证",
     "alias": "伤风、冒风、时行感冒",
     "syndromes": [
       {
@@ -47,6 +48,7 @@ var KB_DISEASES = [
   },
   {
     "name": "咳嗽",
+    "cat": "肺系病证",
     "alias": "咳逆、肺咳",
     "syndromes": [
       {
@@ -101,6 +103,7 @@ var KB_DISEASES = [
   },
   {
     "name": "哮喘",
+    "cat": "肺系病证",
     "alias": "哮病、喘证、哮吼",
     "syndromes": [
       {
@@ -147,6 +150,7 @@ var KB_DISEASES = [
   },
   {
     "name": "发热",
+    "cat": "气血津液病证",
     "alias": "内伤发热、身热",
     "syndromes": [
       {
@@ -201,6 +205,7 @@ var KB_DISEASES = [
   },
   {
     "name": "高血压",
+    "cat": "脑系病证",
     "alias": "眩晕、头痛、肝风",
     "syndromes": [
       {
@@ -247,6 +252,7 @@ var KB_DISEASES = [
   },
   {
     "name": "冠心病",
+    "cat": "心系病证",
     "alias": "胸痹、心痛、真心痛",
     "syndromes": [
       {
@@ -301,6 +307,7 @@ var KB_DISEASES = [
   },
   {
     "name": "心悸",
+    "cat": "心系病证",
     "alias": "惊悸、怔忡",
     "syndromes": [
       {
@@ -355,6 +362,7 @@ var KB_DISEASES = [
   },
   {
     "name": "失眠",
+    "cat": "心系病证",
     "alias": "不寐、不得眠、目不瞑",
     "syndromes": [
       {
@@ -401,6 +409,7 @@ var KB_DISEASES = [
   },
   {
     "name": "头痛",
+    "cat": "脑系病证",
     "alias": "头风、脑风",
     "syndromes": [
       {
@@ -455,6 +464,7 @@ var KB_DISEASES = [
   },
   {
     "name": "眩晕",
+    "cat": "脑系病证",
     "alias": "眩冒、目眩、头晕",
     "syndromes": [
       {
@@ -501,6 +511,7 @@ var KB_DISEASES = [
   },
   {
     "name": "中风（恢复期）",
+    "cat": "脑系病证",
     "alias": "卒中、偏枯、半身不遂",
     "syndromes": [
       {
@@ -531,6 +542,7 @@ var KB_DISEASES = [
   },
   {
     "name": "胃痛",
+    "cat": "脾胃系病证",
     "alias": "胃脘痛、心下痛",
     "syndromes": [
       {
@@ -585,6 +597,7 @@ var KB_DISEASES = [
   },
   {
     "name": "痞满",
+    "cat": "脾胃系病证",
     "alias": "心下痞、胃痞",
     "syndromes": [
       {
@@ -631,6 +644,7 @@ var KB_DISEASES = [
   },
   {
     "name": "呕吐",
+    "cat": "脾胃系病证",
     "alias": "呕逆、吐逆",
     "syndromes": [
       {
@@ -685,6 +699,7 @@ var KB_DISEASES = [
   },
   {
     "name": "泄泻",
+    "cat": "脾胃系病证",
     "alias": "腹泻、下利、溏泄",
     "syndromes": [
       {
@@ -739,6 +754,7 @@ var KB_DISEASES = [
   },
   {
     "name": "便秘",
+    "cat": "脾胃系病证",
     "alias": "大便难、脾约、秘结",
     "syndromes": [
       {
@@ -793,6 +809,7 @@ var KB_DISEASES = [
   },
   {
     "name": "胁痛",
+    "cat": "肝胆系病证",
     "alias": "胁肋痛、季胁痛",
     "syndromes": [
       {
@@ -831,6 +848,7 @@ var KB_DISEASES = [
   },
   {
     "name": "黄疸",
+    "cat": "肝胆系病证",
     "alias": "黄瘅、谷疸、酒疸",
     "syndromes": [
       {
@@ -877,6 +895,7 @@ var KB_DISEASES = [
   },
   {
     "name": "水肿",
+    "cat": "肾系病证",
     "alias": "水气、浮肿、风水",
     "syndromes": [
       {
@@ -923,6 +942,7 @@ var KB_DISEASES = [
   },
   {
     "name": "淋证（尿路感染）",
+    "cat": "肾系病证",
     "alias": "热淋、劳淋、淋沥",
     "syndromes": [
       {
@@ -977,6 +997,7 @@ var KB_DISEASES = [
   },
   {
     "name": "消渴（糖尿病）",
+    "cat": "气血津液病证",
     "alias": "消瘅、三消、脾瘅",
     "syndromes": [
       {
@@ -1023,6 +1044,7 @@ var KB_DISEASES = [
   },
   {
     "name": "腰痛",
+    "cat": "肢体经络病证",
     "alias": "腰脊痛、腰腿痛",
     "syndromes": [
       {
@@ -1069,6 +1091,7 @@ var KB_DISEASES = [
   },
   {
     "name": "痹证（关节痛）",
+    "cat": "肢体经络病证",
     "alias": "痹病、历节、风湿",
     "syndromes": [
       {
@@ -1123,6 +1146,7 @@ var KB_DISEASES = [
   },
   {
     "name": "郁证（焦虑抑郁）",
+    "cat": "气血津液病证",
     "alias": "脏躁、梅核气、百合病",
     "syndromes": [
       {
@@ -1177,6 +1201,7 @@ var KB_DISEASES = [
   },
   {
     "name": "月经不调",
+    "cat": "妇科疾病",
     "alias": "月经先期、月经后期、月经先后无定期",
     "syndromes": [
       {
@@ -1231,6 +1256,7 @@ var KB_DISEASES = [
   },
   {
     "name": "痛经",
+    "cat": "妇科疾病",
     "alias": "经行腹痛、室女痛经",
     "syndromes": [
       {
@@ -1277,6 +1303,7 @@ var KB_DISEASES = [
   },
   {
     "name": "带下病",
+    "cat": "妇科疾病",
     "alias": "带下、白崩、五色带",
     "syndromes": [
       {
@@ -1323,6 +1350,7 @@ var KB_DISEASES = [
   },
   {
     "name": "痤疮",
+    "cat": "外科疾病",
     "alias": "粉刺、肺风粉刺、酒刺",
     "syndromes": [
       {
@@ -1361,6 +1389,7 @@ var KB_DISEASES = [
   },
   {
     "name": "湿疹",
+    "cat": "外科疾病",
     "alias": "湿疮、浸淫疮、四弯风",
     "syndromes": [
       {
@@ -1391,6 +1420,7 @@ var KB_DISEASES = [
   },
   {
     "name": "口腔溃疡",
+    "cat": "五官科疾病",
     "alias": "口疮、口疡、口糜",
     "syndromes": [
       {
@@ -1429,6 +1459,7 @@ var KB_DISEASES = [
   },
   {
     "name": "耳鸣耳聋",
+    "cat": "五官科疾病",
     "alias": "耳闭、重听、渐聋",
     "syndromes": [
       {
@@ -1475,6 +1506,7 @@ var KB_DISEASES = [
   },
   {
     "name": "慢性疲劳（虚劳）",
+    "cat": "气血津液病证",
     "alias": "虚损、劳伤、五劳",
     "syndromes": [
       {
@@ -1529,6 +1561,7 @@ var KB_DISEASES = [
   },
   {
     "name": "肥胖",
+    "cat": "气血津液病证",
     "alias": "肥人、膏人、脂人",
     "syndromes": [
       {
@@ -1575,6 +1608,7 @@ var KB_DISEASES = [
   },
   {
     "name": "呃逆",
+    "cat": "脾胃系病证",
     "alias": "哕、打呃、膈肌痉挛",
     "syndromes": [
       {
@@ -1621,6 +1655,7 @@ var KB_DISEASES = [
   },
   {
     "name": "腹痛",
+    "cat": "脾胃系病证",
     "alias": "大腹痛、少腹痛、脐腹痛",
     "syndromes": [
       {
@@ -1675,6 +1710,7 @@ var KB_DISEASES = [
   },
   {
     "name": "痢疾",
+    "cat": "脾胃系病证",
     "alias": "滞下、肠澼、下利脓血",
     "syndromes": [
       {
@@ -1729,6 +1765,7 @@ var KB_DISEASES = [
   },
   {
     "name": "噎膈",
+    "cat": "脾胃系病证",
     "alias": "膈噎、吞咽困难、贲门失弛缓",
     "syndromes": [
       {
@@ -1767,6 +1804,7 @@ var KB_DISEASES = [
   },
   {
     "name": "汗证",
+    "cat": "气血津液病证",
     "alias": "自汗、盗汗、多汗",
     "syndromes": [
       {
@@ -1805,6 +1843,7 @@ var KB_DISEASES = [
   },
   {
     "name": "遗精",
+    "cat": "肾系病证",
     "alias": "梦遗、滑精、失精",
     "syndromes": [
       {
@@ -1843,6 +1882,7 @@ var KB_DISEASES = [
   },
   {
     "name": "阳痿",
+    "cat": "肾系病证",
     "alias": "阴痿、勃起功能障碍",
     "syndromes": [
       {
@@ -1889,6 +1929,7 @@ var KB_DISEASES = [
   },
   {
     "name": "癃闭",
+    "cat": "肾系病证",
     "alias": "小便不通、尿潴留、前列腺增生",
     "syndromes": [
       {
@@ -1943,6 +1984,7 @@ var KB_DISEASES = [
   },
   {
     "name": "关格",
+    "cat": "肾系病证",
     "alias": "小便不通与呕吐并见、慢性肾衰",
     "syndromes": [
       {
@@ -1973,6 +2015,7 @@ var KB_DISEASES = [
   },
   {
     "name": "痿证",
+    "cat": "肢体经络病证",
     "alias": "痿躄、肌无力、肌肉萎缩",
     "syndromes": [
       {
@@ -2019,6 +2062,7 @@ var KB_DISEASES = [
   },
   {
     "name": "颤证（帕金森）",
+    "cat": "肢体经络病证",
     "alias": "震颤、振掉、颤振",
     "syndromes": [
       {
@@ -2065,6 +2109,7 @@ var KB_DISEASES = [
   },
   {
     "name": "面瘫",
+    "cat": "肢体经络病证",
     "alias": "口眼㖞斜、吊线风、面神经麻痹",
     "syndromes": [
       {
@@ -2103,6 +2148,7 @@ var KB_DISEASES = [
   },
   {
     "name": "面痛（三叉神经痛）",
+    "cat": "肢体经络病证",
     "alias": "颊痛、面风痛、颌面痛",
     "syndromes": [
       {
@@ -2149,6 +2195,7 @@ var KB_DISEASES = [
   },
   {
     "name": "鼻渊（鼻窦炎）",
+    "cat": "五官科疾病",
     "alias": "脑漏、鼻流浊涕、慢性鼻窦炎",
     "syndromes": [
       {
@@ -2195,6 +2242,7 @@ var KB_DISEASES = [
   },
   {
     "name": "牙痛",
+    "cat": "五官科疾病",
     "alias": "齿痛、风火牙痛、龋齿牙痛",
     "syndromes": [
       {
@@ -2225,6 +2273,7 @@ var KB_DISEASES = [
   },
   {
     "name": "瘾疹（荨麻疹）",
+    "cat": "外科疾病",
     "alias": "风疹块、㾦癗、风团",
     "syndromes": [
       {
@@ -2263,6 +2312,7 @@ var KB_DISEASES = [
   },
   {
     "name": "乳癖（乳腺增生）",
+    "cat": "外科疾病",
     "alias": "乳核、乳栗、乳房胀痛",
     "syndromes": [
       {
@@ -2293,6 +2343,7 @@ var KB_DISEASES = [
   },
   {
     "name": "闭经",
+    "cat": "妇科疾病",
     "alias": "经闭、不月、月事不来",
     "syndromes": [
       {
@@ -2339,6 +2390,7 @@ var KB_DISEASES = [
   },
   {
     "name": "崩漏",
+    "cat": "妇科疾病",
     "alias": "崩中、漏下、功能性子宫出血",
     "syndromes": [
       {
@@ -2393,6 +2445,7 @@ var KB_DISEASES = [
   },
   {
     "name": "绝经前后诸证（更年期）",
+    "cat": "妇科疾病",
     "alias": "经断前后诸证、更年期综合征",
     "syndromes": [
       {
@@ -2423,6 +2476,7 @@ var KB_DISEASES = [
   },
   {
     "name": "妊娠恶阻",
+    "cat": "妇科疾病",
     "alias": "妊娠呕吐、子病、病儿",
     "syndromes": [
       {

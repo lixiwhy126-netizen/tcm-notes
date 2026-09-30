@@ -482,13 +482,16 @@
   var backBtn = document.getElementById('backBtn');
   var navHome = document.getElementById('navHome');
   var navKB = document.getElementById('navKB');
+  var navData = document.getElementById('navData');
 
   function setHeader(title, showBack, backTarget) {
     headerTitle.textContent = title;
     backBtn.classList.toggle('hidden', !showBack);
     backBtn.onclick = showBack ? function () { location.hash = backTarget; } : null;
-    navHome.classList.toggle('active', (location.hash || '#/').indexOf('#/kb') !== 0);
-    navKB.classList.toggle('active', (location.hash || '').indexOf('#/kb') === 0);
+    var h = location.hash || '#/';
+    navHome.classList.toggle('active', h.indexOf('#/kb') !== 0 && h.indexOf('#/data') !== 0);
+    navKB.classList.toggle('active', h.indexOf('#/kb') === 0);
+    navData.classList.toggle('active', h.indexOf('#/data') === 0);
   }
   function setStatus(s) { saveStatus.textContent = s; }
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
@@ -499,6 +502,7 @@
 
   navHome.onclick = function () { location.hash = '#/'; };
   navKB.onclick = function () { location.hash = '#/kb'; };
+  navData.onclick = function () { location.hash = '#/data'; };
 
   // ---------- 视图：患者列表 ----------
   // ---------- 视图：患者列表（分组文件夹系统） ----------
@@ -506,6 +510,7 @@
   var manageMode = false;     // 多选管理模式
   var checkedPatients = {};   // 勾选项
   var creatingInGroup = null; // 正在哪个组里新建患者（null 表示无）
+  var creatingViaTop = false; // 新建表单是否从顶部「新建患者」按钮弹出（直接建到未分组）
 
   function renderPatientList() {
     setHeader('跟诊病例', false);
@@ -514,24 +519,27 @@
       '<div class="container">' +
       '  <div class="toolbar">' +
       '    <input type="search" id="patientSearch" placeholder="搜索患者姓名 / 诊断 / 证型">' +
+      '    <button class="secondary" id="newPatientBtn">＋新建患者</button>' +
       '    <button class="secondary" id="newGroupBtn">＋新建分组</button>' +
       '    <button class="secondary" id="manageBtn">多选</button>' +
       '  </div>' +
+      '  <div id="topCreator"></div>' +
       '  <div id="groupArea"></div>' +
       '  <div id="manageBar"></div>' +
-      '  <div class="card">' +
-      '    <h2>数据备份与迁移</h2>' +
-      '    <p class="hint">数据（含分组）保存在本浏览器中。换设备或换浏览器前，请先「导出数据」，在新设备上「导入数据」。建议定期导出备份。</p>' +
-      '    <div class="data-row mt16">' +
-      '      <button class="secondary" id="exportBtn">导出数据</button>' +
-      '      <button class="secondary" id="importBtn">导入数据</button>' +
-      '      <input type="file" id="importFile" accept=".json,application/json" class="hidden">' +
-      '    </div>' +
-      '  </div>' +
       '</div>';
 
     var patientSearch = document.getElementById('patientSearch');
     patientSearch.addEventListener('input', renderGroups);
+
+    document.getElementById('newPatientBtn').onclick = function () {
+      if (creatingInGroup === '' && creatingViaTop) {
+        creatingInGroup = null;
+      } else {
+        creatingInGroup = '';
+        creatingViaTop = true;
+      }
+      renderGroups();
+    };
 
     document.getElementById('newGroupBtn').onclick = function () {
       uiPrompt('新分组名称（如：脾胃病组）：', '', function (name) {
@@ -548,14 +556,28 @@
       renderManageBar();
     };
 
+    renderGroups();
+    renderManageBar();
+  }
+
+  // ---------- 视图：数据备份与迁移 ----------
+  function renderData() {
+    setHeader('数据备份与迁移', true, '#/');
+    setStatus('');
+    app.innerHTML =
+      '<div class="container">' +
+      '<div class="card"><h2>数据备份与迁移</h2>' +
+      '<p class="hint">数据（含分组）保存在本浏览器中。换设备或换浏览器前，请先「导出数据」，在新设备上「导入数据」。建议定期导出备份。</p>' +
+      '<div class="data-row mt16">' +
+      '<button class="secondary" id="exportBtn">导出数据</button>' +
+      '<button class="secondary" id="importBtn">导入数据</button>' +
+      '<input type="file" id="importFile" accept=".json,application/json" class="hidden">' +
+      '</div></div></div>';
     document.getElementById('exportBtn').onclick = exportData;
     document.getElementById('importBtn').onclick = function () {
       document.getElementById('importFile').click();
     };
     document.getElementById('importFile').onchange = importData;
-
-    renderGroups();
-    renderManageBar();
   }
 
   // 患者行
@@ -615,8 +637,8 @@
       '</div>' +
       '<div id="gcMatch"></div>' +
       '<div class="gc-btns">' +
-      '<button class="small" id="gcSaveGo">保存并开始记录</button>' +
-      '<button class="small secondary" id="gcSaveOnly">仅保存患者</button>' +
+      '<button class="small" id="gcSaveGo">确认创建并记录</button>' +
+      '<button class="small secondary" id="gcSaveOnly">仅创建</button>' +
       '<button class="small secondary" id="gcCancel">取消</button>' +
       '</div></div>';
   }
@@ -645,9 +667,11 @@
       var h = '';
       matched.forEach(function (p) {
         var inGroup = patientFolders(p).indexOf(g) >= 0;
+        var info = [p.gender, p.age ? p.age + '岁' : '', p.note].filter(Boolean).join(' · ');
         h += '<div class="match-item" data-pid="' + p.id + '">' + esc(p.name) +
+          (info ? ' <span class="match-info">' + esc(info) + '</span>' : '') +
           '<div class="sub">已有 ' + p.visits.length + ' 次就诊' +
-          (inGroup ? '（已在本组）' : '（加入本组）') + ' → 为其新建就诊</div></div>';
+          (g ? (inGroup ? '（已在本组）' : '（加入本组）') : '') + ' → 为其新建就诊</div></div>';
       });
       match.innerHTML = h ? '<div class="match-box">' + h + '</div>' : '';
       Array.prototype.forEach.call(match.querySelectorAll('.match-item'), function (el) {
@@ -657,6 +681,7 @@
           if (g) addToGroup(p, g);
           persist();
           creatingInGroup = null;
+          creatingViaTop = false;
           createVisitAndGo(p);
         };
       });
@@ -666,6 +691,7 @@
       if (!f.name) { toast('请先填写患者姓名'); return; }
       var p = createPatient(f);
       creatingInGroup = null;
+      creatingViaTop = false;
       createVisitAndGo(p);
     };
     document.getElementById('gcSaveOnly').onclick = function () {
@@ -673,10 +699,12 @@
       if (!f.name) { toast('请先填写患者姓名'); return; }
       createPatient(f);
       creatingInGroup = null;
+      creatingViaTop = false;
       renderGroups();
     };
     document.getElementById('gcCancel').onclick = function () {
       creatingInGroup = null;
+      creatingViaTop = false;
       renderGroups();
     };
   }
@@ -715,22 +743,34 @@
         '<div class="folder-head" data-g="' + esc(g) + '">' +
         '<span class="fh-arrow">' + (collapsed ? '▸' : '▾') + '</span><span class="fh-name">' + esc(title) + '</span>' +
         '<span class="fh-count">' + members.length + '</span>' +
-        '<span class="fh-add" data-g="' + esc(g) + '" title="在此组新建患者">＋</span>' +
+        '<span class="fh-add" data-g="' + esc(g) + '">新建患者</span>' +
         (g ? '<span class="fh-del" data-g="' + esc(g) + '" title="删除该组">×</span>' : '') +
         '</div>';
+      if (!g && creatingViaTop) {
+        // 顶部「新建患者」弹出的表单挂在工具栏下方（见 topCreator），此处不重复渲染
+      } else {
+        h += groupCreatorHTML(g);
+      }
       if (!collapsed) {
         h += '<div class="folder-body">';
         h += members.map(patientRow).join('') || '<div class="empty" style="padding:16px">暂无患者</div>';
-        h += '</div>' + groupCreatorHTML(g);
+        h += '</div>';
       }
       h += '</div>';
     });
     if (!groups.length && !patients.length) {
-      h = '<div class="empty">还没有患者。点组名右侧的 ＋ 新建患者；点「＋新建分组」建组。</div>' +
-        '<div class="folder-sec"><div class="folder-head" data-g=""><span class="fh-arrow">▾</span><span class="fh-name">未分组</span><span class="fh-add" data-g="">＋</span></div>' +
-        '<div class="folder-body"></div>' + groupCreatorHTML('') + '</div>';
+      h = '<div class="empty">还没有患者。点上方「＋新建患者」直接登记，或点「＋新建分组」先建组再登记。</div>' +
+        '<div class="folder-sec"><div class="folder-head" data-g=""><span class="fh-arrow">▾</span><span class="fh-name">未分组</span><span class="fh-add" data-g="">新建患者</span></div>' +
+        (creatingViaTop ? '' : groupCreatorHTML('')) +
+        '<div class="folder-body"></div></div>';
     }
     area.innerHTML = h;
+
+    // 顶部「新建患者」按钮弹出的表单（直接建到未分组）
+    var topBox = document.getElementById('topCreator');
+    if (topBox) {
+      topBox.innerHTML = (creatingViaTop && creatingInGroup !== null) ? groupCreatorHTML(creatingInGroup) : '';
+    }
 
     Array.prototype.forEach.call(area.querySelectorAll('.folder-head'), function (el) {
       el.onclick = function (e) {
@@ -743,7 +783,10 @@
     Array.prototype.forEach.call(area.querySelectorAll('.fh-add'), function (el) {
       el.onclick = function (e) {
         e.stopPropagation();
-        creatingInGroup = creatingInGroup === el.dataset.g ? null : el.dataset.g;
+        var g = el.dataset.g;
+        creatingViaTop = false;
+        creatingInGroup = creatingInGroup === g ? null : g;
+        if (creatingInGroup !== null) collapsedGroups[g] = false;
         renderGroups();
       };
     });
@@ -1737,22 +1780,22 @@
     renderKBResults();
   }
 
-  // 卡片操作按钮：所有条目可编辑；自定义删除即移除，内置删除为屏蔽（可用「添加我的知识」重新录入）
+  // 卡片操作按钮：放在标题行右上角（不展开也能操作）；自定义删除即移除，内置删除为屏蔽（可用「添加我的知识」重新录入）
   function cardActions(type, name, customIdx) {
-    var h = '<div class="kb-actions">' +
-      '<button class="secondary small" data-edit-type="' + type + '" data-edit-name="' + esc(name) + '"' +
+    return '<span class="kb-head-actions">' +
+      '<button class="secondary tiny" data-edit-type="' + type + '" data-edit-name="' + esc(name) + '"' +
       (customIdx !== undefined && customIdx !== null ? ' data-edit-idx="' + customIdx + '"' : '') + '>编辑</button>' +
-      ' <button class="danger small" data-del-type="' + type + '" data-del-name="' + esc(name) + '"' +
-      (customIdx !== undefined && customIdx !== null ? ' data-del-i="' + customIdx + '"' : '') + '>删除</button>';
-    return h + '</div>';
+      '<button class="danger tiny" data-del-type="' + type + '" data-del-name="' + esc(name) + '"' +
+      (customIdx !== undefined && customIdx !== null ? ' data-del-i="' + customIdx + '"' : '') + '>删除</button></span>';
   }
   // 折叠卡片：默认只显示标题行，点击展开详情
   function kbCard(type, name, summary, bodyHTML, customIdx) {
     return '<div class="kb-card collapsed">' +
       '<div class="kb-head"><span class="kb-htitle">' + esc(name) + '</span>' +
       (summary ? '<span class="kb-summary">' + esc(summary) + '</span>' : '') +
+      cardActions(type, name, customIdx) +
       '<span class="kb-toggle">▸</span></div>' +
-      '<div class="kb-body">' + bodyHTML + cardActions(type, name, customIdx) + '</div></div>';
+      '<div class="kb-body">' + bodyHTML + '</div></div>';
   }
   function diseaseCard(d, customIdx) {
     var body = (d.alias ? '<div class="kb-row"><b>中医病名/相关</b>　' + esc(d.alias) + '</div>' : '');
@@ -1824,71 +1867,143 @@
       return (py && py.indexOf(q) === 0) || (name && name.toLowerCase().indexOf(q) >= 0);
     }
 
-    if (tab === '全部' || tab === '疾病' || tab === '我的添加') {
-      vis(DISEASES, 'diseases').forEach(function (d) {
-        var synNames = (d.syndromes || []).map(function (s) { return s.name; }).join(' ');
-        if (matchText(d.name, d.alias, synNames, d.py)) { out += diseaseCard(d); total++; }
+    // 按教材大分类（条目的 cat 字段）分组输出；无分类的归入「其他」
+    function emitGroup(entries, cardFn) {
+      var order = [], map = {};
+      entries.forEach(function (e) {
+        var c = e.x.cat || '其他';
+        if (!map[c]) { map[c] = []; order.push(c); }
+        map[c].push(e);
       });
-      if (tab !== '疾病') customKB.diseases.forEach(function (d, i) {
-        if (matchText(d.name, d.alias, d.note)) { out += diseaseCard(d, i); total++; }
-      });
-    }
-    if (tab === '全部' || tab === '舌脉' || tab === '我的添加') {
-      vis(SIGNS, 'signs').forEach(function (s) {
-        if (matchText(s.term, s.indicates)) { out += signCard(s); total++; }
-      });
-      if (tab !== '舌脉') customKB.signs.forEach(function (s, i) {
-        if (matchText(s.term, s.indicates, s.related)) { out += signCard(s, i); total++; }
-      });
-    }
-    if (tab === '全部' || tab === '中药' || tab === '我的添加') {
-      vis(HERBS, 'herbs').forEach(function (h) {
-        if (matchPY(h.py, h.name) || (q && h.effect && h.effect.indexOf(q) >= 0)) { out += herbCard(h); total++; }
-      });
-      if (tab !== '中药') customKB.herbs.forEach(function (h, i) {
-        if (matchPY(h.py, h.name)) { out += herbCard(h, i); total++; }
+      order.forEach(function (c) {
+        out += '<div class="kb-cat">' + esc(c) + '（' + map[c].length + '）</div>';
+        map[c].forEach(function (e) {
+          out += cardFn(e.x, e.ci);
+          total++;
+        });
       });
     }
-    if (tab === '全部' || tab === '方剂' || tab === '我的添加') {
-      vis(FORMULAS, 'formulas').forEach(function (f) {
-        if (matchPY(f.py, f.name) || (q && (f.composition || '').indexOf(q) >= 0)) { out += formulaCard(f); total++; }
-      });
-      if (tab !== '方剂') customKB.formulas.forEach(function (f, i) {
-        if (matchPY(f.py, f.name)) { out += formulaCard(f, i); total++; }
-      });
-    }
-    if (tab === '全部' || tab === '西医诊断' || tab === '我的添加') {
-      vis(WESTERN, 'western').forEach(function (w) {
-        if (matchPY(w.py, w.name) || (q && w.brief && w.brief.indexOf(q) >= 0)) { out += westernCard(w); total++; }
-      });
-      if (tab !== '西医诊断') customKB.western.forEach(function (w, i) {
-        if (matchPY(w.py, w.name)) { out += westernCard(w, i); total++; }
-      });
-    }
-    if (tab === '全部' || tab === '西药' || tab === '我的添加') {
-      vis(DRUGS, 'drugs').forEach(function (d) {
-        if (matchPY(d.py, d.name) || matchText(d.alias, d.usage, d.category)) { out += drugCard(d); total++; }
-      });
-      if (tab !== '西药') customKB.drugs.forEach(function (d, i) {
-        if (matchPY(d.py, d.name) || matchText(d.alias)) { out += drugCard(d, i); total++; }
-      });
-    }
-    if (tab === '全部' || tab === '检验' || tab === '我的添加') {
-      vis(LABS, 'labs').forEach(function (l) {
-        if (matchText(l.term, l.alias, l.normal, l.meaning)) { out += labCard(l); total++; }
-      });
-      if (tab !== '检验') customKB.labs.forEach(function (l, i) {
-        if (matchText(l.term, l.alias)) { out += labCard(l, i); total++; }
-      });
-    }
-    if (tab === '全部' || tab === '症状' || tab === '我的添加') {
-      vis(SYMPTOMS, 'symptoms').forEach(function (s) {
-        if (matchText(s.term, s.alias, s.meaning, s.related)) { out += symptomCard(s); total++; }
-      });
-      if (tab !== '症状') customKB.symptoms.forEach(function (s, i) {
-        if (matchText(s.term, s.alias)) { out += symptomCard(s, i); total++; }
-      });
-    }
+
+    var showTypeHead = (tab === '全部' || tab === '我的添加');
+    var TYPE_DEFS = [
+      { tab: '疾病', label: '疾病（中医）', card: diseaseCard,
+        builtins: function () {
+          return vis(DISEASES, 'diseases').filter(function (d) {
+            var synNames = (d.syndromes || []).map(function (s) { return s.name; }).join(' ');
+            return matchText(d.name, d.alias, synNames, d.py);
+          }).map(function (x) { return { x: x }; });
+        },
+        customs: function () {
+          var r = [];
+          customKB.diseases.forEach(function (d, i) {
+            if (matchText(d.name, d.alias, d.note)) r.push({ x: d, ci: i });
+          });
+          return r;
+        } },
+      { tab: '舌脉', label: '舌脉', card: signCard,
+        builtins: function () {
+          return vis(SIGNS, 'signs').filter(function (s) {
+            return matchText(s.term, s.indicates);
+          }).map(function (x) { return { x: x }; });
+        },
+        customs: function () {
+          var r = [];
+          customKB.signs.forEach(function (s, i) {
+            if (matchText(s.term, s.indicates, s.related)) r.push({ x: s, ci: i });
+          });
+          return r;
+        } },
+      { tab: '中药', label: '中药', card: herbCard,
+        builtins: function () {
+          return vis(HERBS, 'herbs').filter(function (h) {
+            return matchPY(h.py, h.name) || (q && h.effect && h.effect.indexOf(q) >= 0);
+          }).map(function (x) { return { x: x }; });
+        },
+        customs: function () {
+          var r = [];
+          customKB.herbs.forEach(function (h, i) {
+            if (matchPY(h.py, h.name)) r.push({ x: h, ci: i });
+          });
+          return r;
+        } },
+      { tab: '方剂', label: '方剂', card: formulaCard,
+        builtins: function () {
+          return vis(FORMULAS, 'formulas').filter(function (f) {
+            return matchPY(f.py, f.name) || (q && (f.composition || '').indexOf(q) >= 0);
+          }).map(function (x) { return { x: x }; });
+        },
+        customs: function () {
+          var r = [];
+          customKB.formulas.forEach(function (f, i) {
+            if (matchPY(f.py, f.name)) r.push({ x: f, ci: i });
+          });
+          return r;
+        } },
+      { tab: '西医诊断', label: '西医诊断', card: westernCard,
+        builtins: function () {
+          return vis(WESTERN, 'western').filter(function (w) {
+            return matchPY(w.py, w.name) || (q && w.brief && w.brief.indexOf(q) >= 0);
+          }).map(function (x) { return { x: x }; });
+        },
+        customs: function () {
+          var r = [];
+          customKB.western.forEach(function (w, i) {
+            if (matchPY(w.py, w.name)) r.push({ x: w, ci: i });
+          });
+          return r;
+        } },
+      { tab: '西药', label: '西药', card: drugCard,
+        builtins: function () {
+          return vis(DRUGS, 'drugs').filter(function (d) {
+            return matchPY(d.py, d.name) || matchText(d.alias, d.usage, d.category);
+          }).map(function (x) { return { x: x }; });
+        },
+        customs: function () {
+          var r = [];
+          customKB.drugs.forEach(function (d, i) {
+            if (matchPY(d.py, d.name) || matchText(d.alias)) r.push({ x: d, ci: i });
+          });
+          return r;
+        } },
+      { tab: '检验', label: '检验', card: labCard,
+        builtins: function () {
+          return vis(LABS, 'labs').filter(function (l) {
+            return matchText(l.term, l.alias, l.normal, l.meaning);
+          }).map(function (x) { return { x: x }; });
+        },
+        customs: function () {
+          var r = [];
+          customKB.labs.forEach(function (l, i) {
+            if (matchText(l.term, l.alias)) r.push({ x: l, ci: i });
+          });
+          return r;
+        } },
+      { tab: '症状', label: '症状', card: symptomCard,
+        builtins: function () {
+          return vis(SYMPTOMS, 'symptoms').filter(function (s) {
+            return matchText(s.term, s.alias, s.meaning, s.related);
+          }).map(function (x) { return { x: x }; });
+        },
+        customs: function () {
+          var r = [];
+          customKB.symptoms.forEach(function (s, i) {
+            if (matchText(s.term, s.alias)) r.push({ x: s, ci: i });
+          });
+          return r;
+        } }
+    ];
+
+    TYPE_DEFS.forEach(function (def) {
+      var includeBuiltin = (tab === '全部' || tab === def.tab);
+      var includeCustom = (tab === '全部' || tab === '我的添加');
+      if (!includeBuiltin && !includeCustom) return;
+      var entries = [];
+      if (includeBuiltin) entries = entries.concat(def.builtins());
+      if (includeCustom) entries = entries.concat(def.customs());
+      if (!entries.length) return;
+      if (showTypeHead) out += '<div class="kb-type-head">' + def.label + '</div>';
+      emitGroup(entries, def.card);
+    });
 
     if (!total) {
       out = '<div class="empty">' + (q ? '没有找到「' + esc(kbState.q) + '」相关内容<br>可点击上方「添加我的知识」把它录入你的知识库' : '输入关键词开始查询') + '</div>';
@@ -2157,6 +2272,8 @@
         renderPatient(m[1]);
       } else if (h.indexOf('#/kb') === 0) {
         renderKB();
+      } else if (h.indexOf('#/data') === 0) {
+        renderData();
       } else {
         renderPatientList();
       }
