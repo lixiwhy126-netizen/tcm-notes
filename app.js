@@ -7,13 +7,51 @@
   var LS_KB_CUSTOM = 'tcm_kb_custom_v1';
 
   // 内置知识库（来自 kb/*.js，加载失败时降级为空数组）
-  var HERBS = typeof KB_HERBS !== 'undefined' ? KB_HERBS : [];
-  var FORMULAS = typeof KB_FORMULAS !== 'undefined' ? KB_FORMULAS : [];
-  var DISEASES = typeof KB_DISEASES !== 'undefined' ? KB_DISEASES : [];
+  function pairName(p) { return (p.a || '') + '·' + (p.b || ''); }
+  function entryKey(type, x) { return type === 'pairs' ? pairName(x) : (x.name || x.term); }
+  function mergeKB(groups) {
+    var out = [], positions = {};
+    groups.forEach(function (list) {
+      (list || []).forEach(function (x) {
+        var key = entryKey(x.a !== undefined ? 'pairs' : '', x);
+        if (!key) { out.push(x); return; }
+        if (positions[key] !== undefined) out[positions[key]] = x;
+        else { positions[key] = out.length; out.push(x); }
+      });
+    });
+    return out;
+  }
+  var HERBS = mergeKB([
+    typeof KB_HERBS !== 'undefined' ? KB_HERBS : [],
+    typeof KB_HERBS_EXTRA !== 'undefined' ? KB_HERBS_EXTRA : [],
+    typeof KB_PROCESSED !== 'undefined' ? KB_PROCESSED : []
+  ]);
+  var FORMULAS = mergeKB([
+    typeof KB_FORMULAS !== 'undefined' ? KB_FORMULAS : [],
+    typeof KB_FORMULAS_EXTRA !== 'undefined' ? KB_FORMULAS_EXTRA : [],
+    typeof KB_FORMULAS_HANDBOOK !== 'undefined' ? KB_FORMULAS_HANDBOOK : [],
+    typeof KB_CLINICAL_FORMULAS !== 'undefined' ? KB_CLINICAL_FORMULAS : []
+  ]);
+  var DISEASES = mergeKB([
+    typeof KB_DISEASES !== 'undefined' ? KB_DISEASES : [],
+    typeof KB_CLINICAL_DISEASES !== 'undefined' ? KB_CLINICAL_DISEASES : []
+  ]);
+  var SYNDROMES = mergeKB([
+    typeof KB_SYNDROMES !== 'undefined' ? KB_SYNDROMES : [],
+    typeof KB_CLINICAL_SYNDROMES !== 'undefined' ? KB_CLINICAL_SYNDROMES : []
+  ]);
   var SIGNS = typeof KB_SIGNS !== 'undefined' ? KB_SIGNS : [];
-  var WESTERN = typeof KB_WESTERN !== 'undefined' ? KB_WESTERN : [];
+  var WESTERN = mergeKB([
+    typeof KB_WESTERN !== 'undefined' ? KB_WESTERN : [],
+    typeof KB_WESTERN_INTERNAL !== 'undefined' ? KB_WESTERN_INTERNAL : [],
+    typeof KB_CLINICAL_WESTERN !== 'undefined' ? KB_CLINICAL_WESTERN : []
+  ]);
   var LABS = typeof KB_LABS !== 'undefined' ? KB_LABS : [];
-  var PAIRS = typeof KB_PAIRS !== 'undefined' ? KB_PAIRS : [];
+  var PAIRS = mergeKB([
+    typeof KB_PAIRS !== 'undefined' ? KB_PAIRS : [],
+    typeof KB_PAIRS_EXTRA !== 'undefined' ? KB_PAIRS_EXTRA : [],
+    typeof KB_PAIRS_BOOK !== 'undefined' ? KB_PAIRS_BOOK : []
+  ]);
   var SYMPTOMS = typeof KB_SYMPTOMS !== 'undefined' ? KB_SYMPTOMS : [];
   var DRUGS = typeof KB_DRUGS !== 'undefined' ? KB_DRUGS : [];
 
@@ -29,9 +67,11 @@
   function toPy(s) {
     var out = '';
     for (var i = 0; i < s.length; i++) {
-      var c = s[i], found = '';
-      for (var k in PY_CHARS) {
-        if (PY_CHARS[k].indexOf(c) >= 0) { found = k; break; }
+      var c = s[i], found = typeof PY_EXTRA !== 'undefined' && PY_EXTRA[c] ? PY_EXTRA[c] : '';
+      if (!found) {
+        for (var k in PY_CHARS) {
+          if (PY_CHARS[k].indexOf(c) >= 0) { found = k; break; }
+        }
       }
       if (!found) return null;
       out += found;
@@ -54,8 +94,8 @@
   customKB.formulas = customKB.formulas || [];
   customKB.diseases = customKB.diseases || [];
   customKB.signs = customKB.signs || [];
-  customKB.suppress = customKB.suppress || []; // 被用户编辑覆盖或删除的内置条目（"类型|名称"）
-  ['western', 'drugs', 'labs', 'symptoms'].forEach(function (k) {
+  customKB.suppress = customKB.suppress || [];
+  ['western', 'drugs', 'labs', 'symptoms', 'syndromes', 'pairs'].forEach(function (k) {
     customKB[k] = customKB[k] || [];
   });
 
@@ -63,8 +103,13 @@
     return customKB.suppress.indexOf(type + '|' + name) >= 0;
   }
   function vis(list, type) {
-    return list.filter(function (x) { return !isSuppressed(type, x.name || x.term); });
+    return list.filter(function (x) { return !isSuppressed(type, entryKey(type, x)); });
   }
+  function allHerbEntries() { return vis(HERBS, 'herbs').concat(customKB.herbs); }
+  function allFormulaEntries() { return vis(FORMULAS, 'formulas').concat(customKB.formulas); }
+  function allWesternEntries() { return vis(WESTERN, 'western').concat(customKB.western); }
+  function allIndependentSyndromes() { return vis(SYNDROMES, 'syndromes').concat(customKB.syndromes); }
+  function allPairEntries() { return vis(PAIRS, 'pairs').concat(customKB.pairs); }
 
   function persist() { localStorage.setItem(LS_PATIENTS, JSON.stringify(patients)); }
   function persistKB() { localStorage.setItem(LS_KB_CUSTOM, JSON.stringify(customKB)); }
@@ -178,6 +223,10 @@
         addTerm(s.name, { type: 'syndrome', data: s, parent: d });
         addTerm(s.name.replace(/证$/, ''), { type: 'syndrome', data: s, parent: d });
       });
+    });
+    allIndependentSyndromes().forEach(function (s) {
+      addTerm(s.name, { type: 'syndrome', data: s });
+      addTerm(s.name.replace(/证$/, ''), { type: 'syndrome', data: s });
     });
     vis(SIGNS, 'signs').forEach(function (s) { addTerm(s.term, { type: 'sign', data: s }); });
     // 舌脉常见口语变体
@@ -307,11 +356,14 @@
       if (data.note) h += '<div class="kp-row">' + esc(data.note).replace(/\n/g, '<br>') + '</div>';
     } else if (type === 'syndrome') {
       h += '<div class="kp-title">' + esc(data.name) + (parent ? '<span class="kp-meta">　所属：' + esc(parent.name) + '</span>' : '') + '</div>';
-      if (data.symptoms) h += '<div class="kp-row"><b>症状</b>　' + esc(data.symptoms) + '</div>';
+      if (data.cat) h += '<div class="kp-meta">' + esc(data.cat) + '</div>';
+      if (data.symptoms) h += '<div class="kp-row"><b>证候表现</b>　' + esc(data.symptoms) + '</div>';
       if (data.tongue) h += '<div class="kp-row"><b>舌象</b>　' + esc(data.tongue) + '</div>';
       if (data.pulse) h += '<div class="kp-row"><b>脉象</b>　' + esc(data.pulse) + '</div>';
       if (data.treatment) h += '<div class="kp-row"><b>治法</b>　' + esc(data.treatment) + '</div>';
       if (data.formulas) h += '<div class="kp-row"><b>代表方</b>　' + esc(data.formulas) + '</div>';
+      if (data.note) h += '<div class="kp-row"><b>辨证说明</b>　' + esc(data.note) + '</div>';
+      if (data.source) h += '<div class="kp-meta">来源：' + esc(data.source) + '</div>';
     } else if (type === 'sign') {
       h += '<div class="kp-title">' + esc(data.term) + '<span class="kp-meta">　' + esc(data.category || '') + '</span></div>';
       if (data.indicates) h += '<div class="kp-row"><b>指向</b>　' + esc(data.indicates) + '</div>';
@@ -340,7 +392,10 @@
       if (data.meaning) h += '<div class="kp-row"><b>临床意义</b>　' + esc(data.meaning) + '</div>';
     } else if (type === 'pair') {
       h += '<div class="kp-title">' + esc(data.a) + ' — ' + esc(data.b) + '<span class="kp-meta">　对药</span></div>';
-      if (data.effect) h += '<div class="kp-row"><b>方解</b>　' + esc(data.effect) + '</div>';
+      if (data.effect) h += '<div class="kp-row"><b>伍用功能</b>　' + esc(data.effect) + '</div>';
+      if (data.indications) h += '<div class="kp-row"><b>主治</b>　' + esc(data.indications) + '</div>';
+      if (data.usage) h += '<div class="kp-row"><b>常用量</b>　' + esc(data.usage) + '</div>';
+      if (data.classic) h += '<div class="kp-row"><b>经验</b>　' + esc(data.classic) + '</div>';
       if (data.source) h += '<div class="kp-row"><b>出处</b>　' + esc(data.source) + '</div>';
     }
     return h;
@@ -354,6 +409,10 @@
     document.body.appendChild(popEl);
     var r = anchorEl.getBoundingClientRect();
     var top = r.bottom + window.scrollY + 6;
+    if (r.bottom + popEl.offsetHeight + 12 > window.innerHeight && r.top - popEl.offsetHeight - 6 > 0) {
+      top = r.top + window.scrollY - popEl.offsetHeight - 6;
+    }
+    top = Math.max(window.scrollY + 8, top);
     var left = Math.max(8, Math.min(r.left + window.scrollX, window.innerWidth - 340));
     popEl.style.top = top + 'px';
     popEl.style.left = left + 'px';
@@ -377,9 +436,13 @@
     showPopRaw(anchorEl,
       '<div class="kp-title">' + esc(h.name) +
       (h.dosage ? ' <span class="kp-meta">常用 ' + esc(h.dosage) + '</span>' : '') + '</div>' +
+      (h.parent ? '<div class="kp-meta">母药：' + esc(h.parent) + (h.processing ? ' · ' + esc(h.processing) : '') + '</div>' : '') +
       (h.nature ? '<div class="kp-row"><b>性味归经</b>　' + esc(h.nature) + '</div>' : '') +
       (h.effect ? '<div class="kp-row"><b>功效</b>　' + esc(h.effect) + '</div>' : '') +
-      (h.classic ? '<div class="kp-row"><b>经典</b>　' + esc(h.classic) + '</div>' : ''));
+      (h.usage ? '<div class="kp-row"><b>用法用量</b>　' + esc(h.usage) + '</div>' : '') +
+      (h.caution ? '<div class="kp-row"><b>使用注意</b>　' + esc(h.caution) + '</div>' : '') +
+      (h.classic ? '<div class="kp-row"><b>说明</b>　' + esc(h.classic) + '</div>' : '') +
+      (h.source ? '<div class="kp-meta">来源：' + esc(h.source) + '</div>' : ''));
   }
   // 治法 → 对应证型 反查
   var TREAT_INDEX = null;
@@ -391,6 +454,10 @@
         if (!s.treatment) return;
         (TREAT_INDEX[s.treatment] = TREAT_INDEX[s.treatment] || []).push({ syn: s, disease: d });
       });
+    });
+    allIndependentSyndromes().forEach(function (s) {
+      if (!s.treatment) return;
+      (TREAT_INDEX[s.treatment] = TREAT_INDEX[s.treatment] || []).push({ syn: s, disease: { name: s.cat || '证型' } });
     });
     return TREAT_INDEX;
   }
@@ -517,11 +584,13 @@
     setStatus('');
     app.innerHTML =
       '<div class="container">' +
-      '  <div class="toolbar">' +
+      '  <div class="toolbar patient-toolbar">' +
       '    <input type="search" id="patientSearch" placeholder="搜索患者姓名 / 诊断 / 证型">' +
-      '    <button class="secondary" id="newPatientBtn">＋新建患者</button>' +
-      '    <button class="secondary" id="newGroupBtn">＋新建分组</button>' +
-      '    <button class="secondary" id="manageBtn">多选</button>' +
+      '    <div class="patient-actions">' +
+      '      <button class="secondary" id="newPatientBtn">＋新建患者</button>' +
+      '      <button class="secondary" id="newGroupBtn">＋新建分组</button>' +
+      '      <button class="secondary" id="manageBtn">多选</button>' +
+      '    </div>' +
       '  </div>' +
       '  <div id="topCreator"></div>' +
       '  <div id="groupArea"></div>' +
@@ -1054,8 +1123,9 @@
       '<input type="date" data-field="visitDate" class="date-slim" value="' + esc(v.visitDate) + '"></div>' +
 
       '<div class="card"><h2>病情记录</h2>' +
-      '<div class="field"><textarea data-field="condition" id="conditionTa" rows="10">' + esc(v.condition) + '</textarea></div>' +
-      '<div id="termStrip"></div>' +
+      '<div class="field condition-wrap"><pre id="conditionHighlight" class="condition-highlight" aria-hidden="true"></pre>' +
+      '<textarea data-field="condition" id="conditionTa" rows="10" spellcheck="false">' + esc(v.condition) + '</textarea></div>' +
+      '<p class="hint">加粗下划线词条可悬停或点击查看注解。</p><div id="termStrip"></div>' +
       '</div>' +
 
       '<div class="card"><h2>诊断与治法</h2>' +
@@ -1140,12 +1210,42 @@
 
     // ===== 词条识别 + 悬浮弹窗 =====
     var termStrip = document.getElementById('termStrip');
+    var conditionHighlight = document.getElementById('conditionHighlight');
     var lastAutoTerm = '';
     var autoPopTimer = null;
+
+    function regexEscape(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+    function refreshConditionHighlight(terms) {
+      var text = v.condition || '';
+      var hits = terms.filter(function (t, i) {
+        return text.indexOf(t) >= 0 && terms.indexOf(t) === i;
+      }).sort(function (a, b) { return b.length - a.length; });
+      if (!hits.length) {
+        conditionHighlight.textContent = text + '\n';
+        return;
+      }
+      var re = new RegExp(hits.map(regexEscape).join('|'), 'g');
+      var h = '', last = 0, m;
+      while ((m = re.exec(text))) {
+        h += esc(text.slice(last, m.index)) + '<span class="inline-term" data-term="' + esc(m[0]) + '">' + esc(m[0]) + '</span>';
+        last = m.index + m[0].length;
+      }
+      conditionHighlight.innerHTML = h + esc(text.slice(last)) + '\n';
+      Array.prototype.forEach.call(conditionHighlight.querySelectorAll('.inline-term'), function (el) {
+        el.addEventListener('mouseenter', function () { showPop(el, el.dataset.term); });
+        el.addEventListener('mouseleave', scheduleHidePop);
+        el.addEventListener('click', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          showPop(el, el.dataset.term);
+        });
+      });
+    }
 
     function refreshTerms(autoPopAnchor) {
       var text = v.condition + ' ' + v.tcmDiagnosis + ' ' + v.syndrome + ' ' + v.westernDiagnosis;
       var terms = detectTerms(text);
+      refreshConditionHighlight(terms);
       if (!terms.length) { termStrip.innerHTML = ''; return; }
       termStrip.innerHTML = '<div class="sugg-label">识别到（悬停/点击查看）：</div><div class="term-strip">' +
         terms.map(function (t) { return '<span class="term-chip" data-term="' + esc(t) + '">' + esc(t) + '</span>'; }).join('') +
@@ -1324,11 +1424,15 @@
     var ALL_SYNDROMES = [];
     allDiseases().forEach(function (d) {
       (d.syndromes || []).forEach(function (s) {
-        ALL_SYNDROMES.push({ name: s.name, py: toPy(s.name) || '', treatment: s.treatment || '', disease: d.name });
+        ALL_SYNDROMES.push({ name: s.name, py: s.py || toPy(s.name) || '', treatment: s.treatment || '', disease: d.name });
       });
     });
+    allIndependentSyndromes().forEach(function (s) {
+      if (ALL_SYNDROMES.some(function (x) { return x.name === s.name; })) return;
+      ALL_SYNDROMES.push({ name: s.name, py: s.py || toPy(s.name) || '', treatment: s.treatment || '', disease: s.cat || '中医诊断学' });
+    });
     function isWesternName(name) {
-      return WESTERN.some(function (w) { return w.name === name; });
+      return allWesternEntries().some(function (w) { return w.name === name; });
     }
     bindSuggest(
       document.getElementById('diagInput'),
@@ -1336,7 +1440,8 @@
       function (q) {
         var items = [];
         allDiseases().forEach(function (d) {
-          if ((d.py && d.py.indexOf(q) === 0) || d.name.toLowerCase().indexOf(q) >= 0 ||
+          var py = d.py || toPy(d.name) || '';
+          if ((py && py.indexOf(q) === 0) || d.name.toLowerCase().indexOf(q) >= 0 ||
             (d.alias && d.alias.indexOf(q) >= 0)) items.push({ kind: 'D', data: d });
         });
         ALL_SYNDROMES.forEach(function (s) {
@@ -1367,8 +1472,9 @@
       document.getElementById('wdiagInput'),
       document.getElementById('wdiagResults'),
       function (q) {
-        return WESTERN.filter(function (w) {
-          return (w.py && w.py.indexOf(q) === 0) || w.name.toLowerCase().indexOf(q) >= 0;
+        return allWesternEntries().filter(function (w) {
+          var py = w.py || toPy(w.name) || '';
+          return (py && py.indexOf(q) === 0) || w.name.toLowerCase().indexOf(q) >= 0;
         });
       },
       function (w, i) {
@@ -1390,6 +1496,12 @@
           ALL_TREATMENTS.push({ name: s.treatment, py: toPy(s.treatment) || '', disease: d.name });
         }
       });
+    });
+    allIndependentSyndromes().forEach(function (s) {
+      if (s.treatment && !seenT[s.treatment]) {
+        seenT[s.treatment] = 1;
+        ALL_TREATMENTS.push({ name: s.treatment, py: toPy(s.treatment) || '', disease: s.cat || '中医诊断学' });
+      }
     });
     bindSuggest(
       document.getElementById('treatInput'),
@@ -1442,7 +1554,12 @@
     function growTa() {
       condTa.style.height = 'auto';
       condTa.style.height = Math.max(condTa.scrollHeight, 200) + 'px';
+      conditionHighlight.style.height = condTa.style.height;
     }
+    condTa.addEventListener('scroll', function () {
+      conditionHighlight.scrollTop = condTa.scrollTop;
+      conditionHighlight.scrollLeft = condTa.scrollLeft;
+    });
     condTa.addEventListener('input', function () {
       if (templateValid(condTa.value)) {
         lastGood = condTa.value;
@@ -1509,8 +1626,11 @@
     }
     // 对药识别
     function findPairs() {
-      var bases = v.herbs.map(function (hb) { return herbBaseName(hb.name); });
-      return PAIRS.filter(function (pr) {
+      var bases = v.herbs.map(function (hb) {
+        var h = findHerb(hb.name);
+        return h && h.parent ? h.parent : herbBaseName(hb.name);
+      });
+      return allPairEntries().filter(function (pr) {
         return bases.indexOf(pr.a) >= 0 && bases.indexOf(pr.b) >= 0;
       });
     }
@@ -1695,10 +1815,12 @@
       if (!q) { herbResults.classList.add('hidden'); return; }
       var items = [];
       allFormulas().forEach(function (f) {
-        if ((f.py && f.py.indexOf(q) === 0) || f.name.indexOf(q) >= 0) items.push({ kind: 'F', data: f });
+        var py = f.py || toPy(f.name) || '';
+        if ((py && py.indexOf(q) === 0) || f.name.indexOf(q) >= 0) items.push({ kind: 'F', data: f });
       });
       allHerbs().forEach(function (hb) {
-        if ((hb.py && hb.py.indexOf(q) === 0) || hb.name.indexOf(q) >= 0) items.push({ kind: 'H', data: hb });
+        var py = hb.py || toPy(hb.name) || '';
+        if ((py && py.indexOf(q) === 0) || hb.name.indexOf(q) >= 0) items.push({ kind: 'H', data: hb });
       });
       items = items.slice(0, 8);
       if (!items.length) { herbResults.classList.add('hidden'); return; }
@@ -1707,9 +1829,9 @@
           return '<div class="q-item" data-i="' + i + '"><div class="t"><span class="tag">方</span>' + esc(it.data.name) + '</div>' +
             '<div class="sub">' + esc(it.data.composition || '') + '</div></div>';
         }
-        return '<div class="q-item" data-i="' + i + '"><div class="t"><span class="tag">药</span>' + esc(it.data.name) +
+        return '<div class="q-item" data-i="' + i + '"><div class="t"><span class="tag">' + (it.data.parent ? '炮' : '药') + '</span>' + esc(it.data.name) +
           (it.data.dosage ? ' ' + esc(it.data.dosage) : '') + (herbUsage(it.data.name) ? '（' + herbUsage(it.data.name) + '）' : '') + '</div>' +
-          '<div class="sub">' + esc(it.data.effect || '') + '</div></div>';
+          '<div class="sub">' + esc((it.data.parent ? it.data.parent + ' · ' + (it.data.processing || '炮制品') + ' · ' : '') + (it.data.effect || '')) + '</div></div>';
       }).join('');
       herbResults.classList.remove('hidden');
       Array.prototype.forEach.call(herbResults.querySelectorAll('.q-item'), function (el) {
@@ -1749,7 +1871,7 @@
     setHeader('知识库', true, '#/');
     setStatus('');
 
-    var tabs = ['全部', '疾病', '舌脉', '中药', '方剂', '西医诊断', '西药', '检验', '症状', '我的添加'];
+    var tabs = ['全部', '疾病', '证型', '舌脉', '中药', '方剂', '西医诊断', '西药', '检验', '症状', '对药', '我的添加'];
     app.innerHTML =
       '<div class="container">' +
       '<div class="toolbar"><input type="search" id="kbSearch" placeholder="如：高血压 / 舌红少苔 / 柴胡 / xcht" value="' + esc(kbState.q) + '"></div>' +
@@ -1812,6 +1934,16 @@
     var summary = (d.alias || '') + ((d.syndromes || []).length ? '（' + d.syndromes.length + '个证型）' : '');
     return kbCard('diseases', d.name, summary, body, customIdx);
   }
+  function syndromeCard(s, customIdx) {
+    var body = (s.symptoms ? '<div class="kb-row"><b>证候表现</b>　' + esc(s.symptoms) + '</div>' : '') +
+      (s.tongue ? '<div class="kb-row"><b>舌象</b>　' + esc(s.tongue) + '</div>' : '') +
+      (s.pulse ? '<div class="kb-row"><b>脉象</b>　' + esc(s.pulse) + '</div>' : '') +
+      (s.treatment ? '<div class="kb-row"><b>治法</b>　' + esc(s.treatment) + '</div>' : '') +
+      (s.formulas ? '<div class="kb-row"><b>代表方</b>　' + esc(s.formulas) + '</div>' : '') +
+      (s.note ? '<div class="kb-row"><b>辨证说明</b>　' + esc(s.note) + '</div>' : '') +
+      (s.source ? '<div class="kb-row hint">来源：' + esc(s.source) + '</div>' : '');
+    return kbCard('syndromes', s.name, s.symptoms || s.note || '', body, customIdx);
+  }
   function signCard(s, customIdx) {
     var body = '<div class="kb-row"><b>指向</b>　' + esc(s.indicates) + '</div>' +
       (s.related ? '<div class="kb-row"><b>说明</b>　' + esc(s.related) + '</div>' : '') +
@@ -1819,15 +1951,27 @@
     return kbCard('signs', s.term, (s.category || '') + '　' + (s.indicates || ''), body, customIdx);
   }
   function herbCard(h, customIdx) {
-    var body = (h.nature ? '<div class="kb-row"><b>性味归经</b>　' + esc(h.nature) + '</div>' : '') +
+    var body = (h.parent ? '<div class="kb-row"><b>母药 / 炮制</b>　' + esc(h.parent + ' · ' + (h.processing || '炮制品')) + '</div>' : '') +
+      (h.nature ? '<div class="kb-row"><b>性味归经</b>　' + esc(h.nature) + '</div>' : '') +
       (h.effect ? '<div class="kb-row"><b>功效</b>　' + esc(h.effect) + '</div>' : '') +
-      (h.classic ? '<div class="kb-row"><b>经典</b>　' + esc(h.classic) + '</div>' : '');
+      (h.usage ? '<div class="kb-row"><b>用法用量</b>　' + esc(h.usage) + '</div>' : '') +
+      (h.caution ? '<div class="kb-row"><b>使用注意</b>　' + esc(h.caution) + '</div>' : '') +
+      (h.classic ? '<div class="kb-row"><b>说明</b>　' + esc(h.classic) + '</div>' : '') +
+      (h.source ? '<div class="kb-row hint">来源：' + esc(h.source) + '</div>' : '');
+    var children = allHerbEntries().filter(function (x) { return x.parent === h.name; });
+    if (children.length) {
+      body += '<div class="kb-syn"><div class="kb-syn-name">炮制品与附药（' + children.length + '）</div>' + children.map(function (x) {
+        return '<div class="kb-row"><b>' + esc(x.name) + '</b>　' + esc((x.processing ? x.processing + ' · ' : '') + (x.effect || '')) + '</div>';
+      }).join('') + '</div>';
+    }
     return kbCard('herbs', h.name, (h.dosage ? h.dosage + '　' : '') + (h.effect || '').slice(0, 24), body, customIdx);
   }
   function formulaCard(f, customIdx) {
     var body = (f.composition ? '<div class="kb-row"><b>组成</b>　' + esc(f.composition) + '</div>' : '') +
       (f.effect ? '<div class="kb-row"><b>功用</b>　' + esc(f.effect) + '</div>' : '') +
-      (f.indications ? '<div class="kb-row"><b>主治</b>　' + esc(f.indications) + '</div>' : '');
+      (f.indications ? '<div class="kb-row"><b>主治</b>　' + esc(f.indications) + '</div>' : '') +
+      (f.classic ? '<div class="kb-row"><b>证治机理</b>　' + esc(f.classic) + '</div>' : '') +
+      (f.source ? '<div class="kb-row hint">来源：' + esc(f.source) + '</div>' : '');
     return kbCard('formulas', f.name, f.effect || '', body, customIdx);
   }
   function westernCard(w, customIdx) {
@@ -1850,6 +1994,14 @@
       (s.related ? '<div class="kb-row"><b>常见方向</b>　' + esc(s.related) + '</div>' : '');
     return kbCard('symptoms', s.term, (s.meaning || '').slice(0, 24), body, customIdx);
   }
+  function pairCard(p, customIdx) {
+    var body = (p.effect ? '<div class="kb-row"><b>伍用功能</b>　' + esc(p.effect) + '</div>' : '') +
+      (p.indications ? '<div class="kb-row"><b>主治</b>　' + esc(p.indications) + '</div>' : '') +
+      (p.usage ? '<div class="kb-row"><b>常用量</b>　' + esc(p.usage) + '</div>' : '') +
+      (p.classic ? '<div class="kb-row"><b>经验</b>　' + esc(p.classic) + '</div>' : '') +
+      (p.source ? '<div class="kb-row hint">来源：' + esc(p.source) + '</div>' : '');
+    return kbCard('pairs', pairName(p), p.cat || '', body, customIdx);
+  }
 
   function renderKBResults() {
     var q = kbState.q.trim().toLowerCase();
@@ -1864,6 +2016,7 @@
     }
     function matchPY(py, name) {
       if (!q) return true;
+      py = py || (name ? toPy(name) : '') || '';
       return (py && py.indexOf(q) === 0) || (name && name.toLowerCase().indexOf(q) >= 0);
     }
 
@@ -1897,6 +2050,19 @@
           var r = [];
           customKB.diseases.forEach(function (d, i) {
             if (matchText(d.name, d.alias, d.note)) r.push({ x: d, ci: i });
+          });
+          return r;
+        } },
+      { tab: '证型', label: '证型（中医诊断学）', card: syndromeCard,
+        builtins: function () {
+          return vis(SYNDROMES, 'syndromes').filter(function (s) {
+            return matchPY(s.py, s.name) || matchText(s.symptoms, s.note, s.cat);
+          }).map(function (x) { return { x: x }; });
+        },
+        customs: function () {
+          var r = [];
+          customKB.syndromes.forEach(function (s, i) {
+            if (matchPY(s.py, s.name) || matchText(s.symptoms, s.note)) r.push({ x: s, ci: i });
           });
           return r;
         } },
@@ -1990,6 +2156,19 @@
             if (matchText(s.term, s.alias)) r.push({ x: s, ci: i });
           });
           return r;
+        } },
+      { tab: '对药', label: '对药', card: pairCard,
+        builtins: function () {
+          return vis(PAIRS, 'pairs').filter(function (p) {
+            return matchText(p.a, p.b, p.effect, p.source, p.cat) || (q && (toPy(p.a + p.b) || '').indexOf(q) === 0);
+          }).map(function (x) { return { x: x }; });
+        },
+        customs: function () {
+          var r = [];
+          customKB.pairs.forEach(function (p, i) {
+            if (matchText(p.a, p.b, p.effect, p.source)) r.push({ x: p, ci: i });
+          });
+          return r;
         } }
     ];
 
@@ -2045,14 +2224,14 @@
         e.stopPropagation();
         var type = el.dataset.editType;
         var name = el.dataset.editName;
-        var obj, target = {};
+        var obj, target = { host: el.closest('.kb-card') };
         if (el.dataset.editIdx !== undefined && el.dataset.editIdx !== '') {
           target.customIdx = Number(el.dataset.editIdx);
           obj = customKB[type][target.customIdx];
         } else {
-          var builtin = { diseases: DISEASES, signs: SIGNS, herbs: HERBS, formulas: FORMULAS, western: WESTERN, drugs: DRUGS, labs: LABS, symptoms: SYMPTOMS }[type];
+          var builtin = { diseases: DISEASES, syndromes: SYNDROMES, signs: SIGNS, herbs: HERBS, formulas: FORMULAS, western: WESTERN, drugs: DRUGS, labs: LABS, symptoms: SYMPTOMS, pairs: PAIRS }[type];
           for (var i = 0; i < builtin.length; i++) {
-            if ((builtin[i].name || builtin[i].term) === name) { obj = builtin[i]; break; }
+            if (entryKey(type, builtin[i]) === name) { obj = builtin[i]; break; }
           }
           target.builtinName = name;
         }
@@ -2063,19 +2242,21 @@
 
   // ---------- 自定义知识（添加 / 编辑） ----------
   function renderCustomForm(presetType, presetObj, target) {
-    var wrap = document.getElementById('customFormWrap');
+    var wrap = target && target.host ? target.host : document.getElementById('customFormWrap');
     var editing = !!(presetObj && target);
     var typeFields = {
-      herbs: [['name', '药名*'], ['py', '拼音首字母（如 ch）'], ['dosage', '常用剂量（如 10g）'], ['nature', '性味归经'], ['effect', '功效'], ['classic', '经典论述（选填）']],
-      formulas: [['name', '方名*'], ['py', '拼音首字母（如 xcht）'], ['composition', '组成及剂量（如：柴胡12g 黄芩9g……）'], ['effect', '功用'], ['indications', '主治']],
+      herbs: [['name', '药名*'], ['py', '拼音首字母（如 ch）'], ['parent', '母药（如 黄芪）'], ['processing', '炮制方式（如 盐炙）'], ['cat', '分类'], ['dosage', '常用剂量（如 10g）'], ['nature', '性味归经'], ['effect', '功效'], ['usage', '用法用量'], ['caution', '使用注意'], ['classic', '经典论述（选填）']],
+      formulas: [['name', '方名*'], ['py', '拼音首字母（如 xcht）'], ['cat', '分类'], ['composition', '组成及剂量（如：柴胡12g 黄芩9g……）'], ['effect', '功用'], ['indications', '主治'], ['source', '出处']],
       diseases: [['name', '病名*'], ['alias', '中医病名/别名'], ['note', '内容（证型、症状、方药等，自由记录）']],
+      syndromes: [['name', '证型名*'], ['py', '拼音首字母'], ['cat', '分类'], ['symptoms', '证候表现'], ['tongue', '舌象'], ['pulse', '脉象'], ['treatment', '治法'], ['formulas', '代表方'], ['note', '辨证说明'], ['source', '出处']],
       signs: [['term', '舌象/脉象*'], ['category', '类别（舌象 或 脉象）'], ['indicates', '指向证候'], ['related', '说明'], ['formulas', '常考虑方']],
-      western: [['name', '西医病名*'], ['py', '拼音首字母（如 tnb）'], ['brief', '解释（诊断要点、注意等）']],
+      western: [['name', '西医病名*'], ['py', '拼音首字母（如 tnb）'], ['cat', '分类'], ['brief', '解释（诊断要点、注意等）']],
       drugs: [['name', '西药名*'], ['py', '拼音首字母（如 amxl）'], ['alias', '别名/商品名'], ['category', '类别（如 降压/降糖/抗生素）'], ['usage', '用途'], ['note', '注意事项']],
       labs: [['term', '指标名*'], ['alias', '别名（如 血氧）'], ['category', '类别（如 血液检查）'], ['normal', '正常范围'], ['meaning', '临床意义']],
-      symptoms: [['term', '症状名*'], ['alias', '别名/口语说法（如 嗓子痛）'], ['meaning', '含义'], ['related', '常见证候方向']]
+      symptoms: [['term', '症状名*'], ['alias', '别名/口语说法（如 嗓子痛）'], ['meaning', '含义'], ['related', '常见证候方向']],
+      pairs: [['a', '第一味药*'], ['b', '第二味药*'], ['cat', '分类'], ['effect', '配伍说明'], ['source', '出处']]
     };
-    var typeNames = { herbs: '中药', formulas: '方剂', diseases: '疾病', signs: '舌脉', western: '西医诊断', drugs: '西药', labs: '检验', symptoms: '症状' };
+    var typeNames = { herbs: '中药', formulas: '方剂', diseases: '疾病', syndromes: '证型', signs: '舌脉', western: '西医诊断', drugs: '西药', labs: '检验', symptoms: '症状', pairs: '对药' };
 
     // 编辑内置疾病时，把结构化证型转为文本方便修改
     var preObj = presetObj ? JSON.parse(JSON.stringify(presetObj)) : null;
@@ -2101,7 +2282,7 @@
       var fields = typeFields[typeSel.value];
       document.getElementById('ckFields').innerHTML = fields.map(function (f) {
         var val = preObj ? (preObj[f[0]] || '') : '';
-        if (f[0] === 'note' || f[0] === 'related' || f[0] === 'composition' || f[0] === 'indications' || f[0] === 'classic' || f[0] === 'brief' || f[0] === 'usage' || f[0] === 'meaning') {
+        if (['note', 'related', 'composition', 'indications', 'classic', 'brief', 'usage', 'meaning', 'symptoms', 'caution', 'effect'].indexOf(f[0]) >= 0) {
           return '<div class="field"><label>' + f[1] + '</label><textarea data-ck="' + f[0] + '" rows="3">' + esc(val) + '</textarea></div>';
         }
         return '<div class="field"><label>' + f[1] + '</label><input data-ck="' + f[0] + '" value="' + esc(val) + '"></div>';
@@ -2109,29 +2290,38 @@
     }
     typeSel.onchange = drawFields;
     drawFields();
+    if (target && target.host) wrap.classList.add('kb-inline-edit');
 
-    document.getElementById('ckCancel').onclick = function () { wrap.innerHTML = ''; };
+    function restoreResults() {
+      var y = window.scrollY;
+      renderKBResults();
+      requestAnimationFrame(function () { window.scrollTo(0, y); });
+    }
+    document.getElementById('ckCancel').onclick = function () {
+      if (target && target.host) restoreResults();
+      else wrap.innerHTML = '';
+    };
     document.getElementById('ckSave').onclick = function () {
       var type = typeSel.value;
-      var obj = {};
+      var obj = preObj ? JSON.parse(JSON.stringify(preObj)) : {};
       var hasName = false;
       Array.prototype.forEach.call(wrap.querySelectorAll('[data-ck]'), function (el) {
         obj[el.dataset.ck] = el.value.trim();
         if (el.dataset.ck === 'name' || el.dataset.ck === 'term') hasName = !!el.value.trim();
       });
+      if (type === 'pairs') hasName = !!(obj.a && obj.b);
       if (!hasName) { toast('请至少填写名称'); return; }
       if (type === 'diseases' && !obj.syndromes) obj.syndromes = [];
 
       if (editing && target.customIdx !== undefined && target.customIdx !== null) {
         customKB[type][target.customIdx] = obj;
       } else if (editing && target.builtinName) {
-        // 覆盖内置：屏蔽原条目，存个人版本（同名个人版本则替换）
         if (customKB.suppress.indexOf(type + '|' + target.builtinName) < 0) {
           customKB.suppress.push(type + '|' + target.builtinName);
         }
         var sameIdx = -1;
         customKB[type].forEach(function (x, i) {
-          if ((x.name || x.term) === (obj.name || obj.term)) sameIdx = i;
+          if (entryKey(type, x) === entryKey(type, obj)) sameIdx = i;
         });
         if (sameIdx >= 0) customKB[type][sameIdx] = obj;
         else customKB[type].push(obj);
@@ -2143,7 +2333,8 @@
       TREAT_INDEX = null;
       wrap.innerHTML = '';
       kbState.tab = editing ? kbState.tab : '我的添加';
-      renderKB();
+      if (editing) restoreResults();
+      else renderKB();
       toast('已保存');
     };
   }
@@ -2230,10 +2421,9 @@
         });
         var addKB = 0;
         if (data.customKB) {
-          ['herbs', 'formulas', 'diseases', 'signs', 'western', 'drugs', 'labs', 'symptoms'].forEach(function (k) {
+          ['herbs', 'formulas', 'diseases', 'syndromes', 'signs', 'western', 'drugs', 'labs', 'symptoms', 'pairs'].forEach(function (k) {
             (data.customKB[k] || []).forEach(function (item) {
-              var key = (k === 'signs' || k === 'labs' || k === 'symptoms') ? 'term' : 'name';
-              var dup = (customKB[k] || []).some(function (x) { return x[key] === item[key]; });
+              var dup = (customKB[k] || []).some(function (x) { return entryKey(k, x) === entryKey(k, item); });
               if (!dup) { customKB[k].push(item); addKB++; }
             });
           });

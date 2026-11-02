@@ -405,3 +405,50 @@ button.tiny { padding: 3px 8px; font-size: 11px; border-radius: 6px; }
 }
 .manage-bar button { padding: 7px 12px; font-size: 13px; }
 #manageBtn.active { background: var(--primary); color: #fff; }
+
+.patient-actions { display: flex; gap: 10px; min-width: 0; }
+.kb-inline-edit { border-color: var(--primary-light); box-shadow: 0 0 0 2px rgba(165,93,75,.12); }
+.kb-inline-edit .card { border: 0; margin: 0; box-shadow: none; }
+.condition-wrap { position: relative; min-height: 200px; }
+.condition-highlight, #conditionTa {
+  width: 100%; margin: 0; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 8px; font-family: inherit; font-size: 15px; line-height: 1.6;
+  white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; tab-size: 4;
+}
+.condition-highlight {
+  position: absolute; inset: 0; z-index: 2; overflow: hidden;
+  color: var(--text); background: transparent; pointer-events: none;
+}
+#conditionTa {
+  position: relative; z-index: 1; display: block; min-height: 200px;
+  color: transparent; caret-color: var(--text); background: transparent; resize: vertical;
+}
+#conditionTa::selection { color: transparent; background: rgba(165,93,75,.25); }
+.inline-term {
+  color: #111; font-weight: 700; text-decoration: underline;
+  text-decoration-thickness: 1.5px; text-underline-offset: 2px;
+  background: #fff7dc; pointer-events: auto; cursor: pointer;
+}
+
+@media (max-width: 600px) {
+  header { padding: 9px 10px; gap: 4px; flex-wrap: wrap; }
+  header h1 { font-size: 15px; min-width: 0; }
+  header button { padding: 7px; font-size: 12px; flex-shrink: 0; }
+  header .save-status { display: none; }
+  .container { padding: 12px; }
+  .patient-toolbar { flex-direction: column; align-items: stretch; }
+  .patient-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .patient-actions button { min-width: 0; padding: 10px 4px; font-size: 12px; white-space: nowrap; }
+  .toolbar input { min-width: 0; }
+  .folder-head { flex-wrap: wrap; gap: 6px; padding: 10px; }
+  .fh-name { min-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fh-add { padding: 0 7px; font-size: 11px; }
+  .folder-body, .group-create { padding-left: 0; }
+  .field-row { flex-direction: column; gap: 0; }
+  .kb-head { flex-wrap: wrap; padding: 10px 12px; }
+  .kb-htitle { max-width: 46%; overflow: hidden; text-overflow: ellipsis; }
+  .kb-summary { order: 3; flex-basis: 100%; }
+  .kb-head-actions { margin-left: auto; }
+  .manage-bar { bottom: 8px; padding: 10px; }
+  .manage-bar select { max-width: 100%; }
+}
